@@ -31,14 +31,14 @@ import { setupProjectWebhook, getRepoPullRequests } from './services/github_serv
 import { runValidationPipeline } from './services/grainchain_library';
 
 const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
-    CODEGEN_ORG_ID: '323',
-    CODEGEN_API_TOKEN: 'sk-ce027fa7-3c8d-4beb-8c86-ed8ae982ac99',
-    GITHUB_TOKEN: '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',
-    GEMINI_API_KEY: 'AIzaSyBXmhlHudrD4zXiv-5fjxi1gGG-_kdtaZ0',
-    CLOUDFLARE_API_KEY: 'eae82cf159577a8838cc83612104c09c5a0d6',
-    CLOUDFLARE_ACCOUNT_ID: '2b2a1d3effa7f7fe4fe2a8c4e48681e3',
+    CODEGEN_ORG_ID: '',
+    CODEGEN_API_TOKEN: '',
+    GITHUB_TOKEN: '',
+    GEMINI_API_KEY: '',
+    CLOUDFLARE_API_KEY: '',
+    CLOUDFLARE_ACCOUNT_ID: '',
     CLOUDFLARE_WORKER_NAME: 'webhook-gateway',
-    CLOUDFLARE_WORKER_URL: 'https://webhook-gateway.pixeliumperfecto.workers.dev',
+    CLOUDFLARE_WORKER_URL: '',
 };
 
 interface AppState {
@@ -366,4 +366,3 @@ const EnhancedApp: React.FC = () => {
 };
 
 export default EnhancedApp;
-

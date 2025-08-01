@@ -1,10 +1,9 @@
-
 import React, { useState, Fragment, ReactNode } from 'react';
 import { XMarkIcon, ChevronDownIcon } from './icons';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
-  size?: 'sm' | 'base';
+  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline' | 'default';
+  size?: 'sm' | 'base' | 'lg';
   children: React.ReactNode;
 }
 
@@ -13,14 +12,17 @@ export const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', s
   
   const variantClasses = {
     primary: 'bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:ring-indigo-500',
+    default: 'bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:ring-indigo-500',
     secondary: 'bg-gray-700 text-gray-100 hover:bg-gray-600 focus-visible:ring-gray-500',
     danger: 'bg-red-600 text-white hover:bg-red-500 focus-visible:ring-red-500',
     ghost: 'bg-transparent text-gray-300 hover:bg-gray-700 hover:text-white',
+    outline: 'border border-gray-300 bg-transparent text-gray-300 hover:bg-gray-700 hover:text-white',
   };
 
   const sizeClasses = {
     base: 'px-4 py-2 text-sm',
     sm: 'px-3 py-1.5 text-xs',
+    lg: 'px-6 py-3 text-base',
   };
 
   return (
@@ -33,17 +35,25 @@ export const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', s
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  title: string;
+  title?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
 }
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer }) => {
+export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, size = 'md' }) => {
   if (!isOpen) return null;
+
+  const sizeClasses = {
+    sm: 'max-w-md',
+    md: 'max-w-2xl',
+    lg: 'max-w-4xl',
+    xl: 'max-w-6xl'
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75" aria-modal="true" role="dialog">
-      <div className="relative bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 my-8 flex flex-col">
+      <div className={`relative bg-gray-800 rounded-lg shadow-xl w-full ${sizeClasses[size]} mx-4 my-8 flex flex-col`}>
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <h3 className="text-lg font-semibold text-white">{title}</h3>
           <Button variant="ghost" onClick={onClose} className="p-1">
@@ -116,11 +126,12 @@ export const Card: React.FC<CardProps> = ({ children, className = '', ...props }
   </div>
 );
 
-interface TabsProps {
+// Legacy Tabs component (keeping for backward compatibility)
+interface LegacyTabsProps {
   tabs: { name: string; content: ReactNode }[];
 }
 
-export const Tabs: React.FC<TabsProps> = ({ tabs }) => {
+export const LegacyTabs: React.FC<LegacyTabsProps> = ({ tabs }) => {
   const [activeTab, setActiveTab] = useState(0);
 
   return (
@@ -176,3 +187,246 @@ export const Spinner: React.FC<React.SVGProps<SVGSVGElement>> = ({className = 'h
     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
   </svg>
 );
+
+// Additional UI components for the new functionality
+
+interface LoadingSpinnerProps {
+  size?: 'sm' | 'md' | 'lg';
+  className?: string;
+}
+
+export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ size = 'md', className = '' }) => {
+  const sizeClasses = {
+    sm: 'w-4 h-4',
+    md: 'w-6 h-6',
+    lg: 'w-8 h-8'
+  };
+
+  return (
+    <div className={`animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 ${sizeClasses[size]} ${className}`} />
+  );
+};
+
+interface BadgeProps {
+  children: React.ReactNode;
+  variant?: 'primary' | 'secondary' | 'success' | 'warning' | 'error';
+  className?: string;
+}
+
+export const Badge: React.FC<BadgeProps> = ({ children, variant = 'primary', className = '' }) => {
+  const variantClasses = {
+    primary: 'bg-blue-100 text-blue-800',
+    secondary: 'bg-gray-100 text-gray-800',
+    success: 'bg-green-100 text-green-800',
+    warning: 'bg-yellow-100 text-yellow-800',
+    error: 'bg-red-100 text-red-800'
+  };
+
+  return (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${variantClasses[variant]} ${className}`}>
+      {children}
+    </span>
+  );
+};
+
+interface PaginationProps {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  showPrevNext?: boolean;
+}
+
+export const Pagination: React.FC<PaginationProps> = ({ 
+  currentPage, 
+  totalPages, 
+  onPageChange, 
+  showPrevNext = true 
+}) => {
+  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+  
+  return (
+    <div className="flex items-center justify-center space-x-2">
+      {showPrevNext && (
+        <Button
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          variant="outline"
+          size="sm"
+        >
+          Previous
+        </Button>
+      )}
+      
+      {pages.map(page => (
+        <Button
+          key={page}
+          onClick={() => onPageChange(page)}
+          variant={page === currentPage ? 'primary' : 'outline'}
+          size="sm"
+        >
+          {page}
+        </Button>
+      ))}
+      
+      {showPrevNext && (
+        <Button
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          variant="outline"
+          size="sm"
+        >
+          Next
+        </Button>
+      )}
+    </div>
+  );
+};
+
+// Enhanced Tabs component
+interface TabsContextValue {
+  value: string;
+  onValueChange: (value: string) => void;
+}
+
+const TabsContext = React.createContext<TabsContextValue | undefined>(undefined);
+
+interface TabsComponentProps {
+  value: string;
+  onValueChange: (value: string) => void;
+  children: React.ReactNode;
+  className?: string;
+}
+
+export const Tabs: React.FC<TabsComponentProps> = ({ value, onValueChange, children, className = '' }) => {
+  return (
+    <TabsContext.Provider value={{ value, onValueChange }}>
+      <div className={className}>
+        {children}
+      </div>
+    </TabsContext.Provider>
+  );
+};
+
+interface TabsListProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export const TabsList: React.FC<TabsListProps> = ({ children, className = '' }) => {
+  return (
+    <div className={`flex space-x-1 border-b border-gray-700 ${className}`}>
+      {children}
+    </div>
+  );
+};
+
+interface TabsTriggerProps {
+  value: string;
+  children: React.ReactNode;
+  className?: string;
+}
+
+export const TabsTrigger: React.FC<TabsTriggerProps> = ({ value, children, className = '' }) => {
+  const context = React.useContext(TabsContext);
+  if (!context) throw new Error('TabsTrigger must be used within Tabs');
+
+  const isActive = context.value === value;
+
+  return (
+    <button
+      onClick={() => context.onValueChange(value)}
+      className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+        isActive
+          ? 'border-blue-500 text-blue-400'
+          : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'
+      } ${className}`}
+    >
+      {children}
+    </button>
+  );
+};
+
+interface TabsContentProps {
+  value: string;
+  children: React.ReactNode;
+  className?: string;
+}
+
+export const TabsContent: React.FC<TabsContentProps> = ({ value, children, className = '' }) => {
+  const context = React.useContext(TabsContext);
+  if (!context) throw new Error('TabsContent must be used within Tabs');
+
+  if (context.value !== value) return null;
+
+  return (
+    <div className={className}>
+      {children}
+    </div>
+  );
+};
+
+// Popover components
+interface PopoverProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: React.ReactNode;
+}
+
+const PopoverContext = React.createContext<{ open: boolean; onOpenChange: (open: boolean) => void } | undefined>(undefined);
+
+export const Popover: React.FC<PopoverProps> = ({ open, onOpenChange, children }) => {
+  return (
+    <PopoverContext.Provider value={{ open, onOpenChange }}>
+      <div className="relative">
+        {children}
+      </div>
+    </PopoverContext.Provider>
+  );
+};
+
+interface PopoverTriggerProps {
+  asChild?: boolean;
+  children: React.ReactNode;
+}
+
+export const PopoverTrigger: React.FC<PopoverTriggerProps> = ({ asChild, children }) => {
+  const context = React.useContext(PopoverContext);
+  if (!context) throw new Error('PopoverTrigger must be used within Popover');
+
+  if (asChild) {
+    return React.cloneElement(children as React.ReactElement, {
+      onClick: () => context.onOpenChange(!context.open)
+    });
+  }
+
+  return (
+    <button onClick={() => context.onOpenChange(!context.open)}>
+      {children}
+    </button>
+  );
+};
+
+interface PopoverContentProps {
+  children: React.ReactNode;
+  align?: 'start' | 'center' | 'end';
+  className?: string;
+}
+
+export const PopoverContent: React.FC<PopoverContentProps> = ({ children, align = 'center', className = '' }) => {
+  const context = React.useContext(PopoverContext);
+  if (!context) throw new Error('PopoverContent must be used within Popover');
+
+  if (!context.open) return null;
+
+  const alignClasses = {
+    start: 'left-0',
+    center: 'left-1/2 transform -translate-x-1/2',
+    end: 'right-0'
+  };
+
+  return (
+    <div className={`absolute top-full mt-2 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-lg ${alignClasses[align]} ${className}`}>
+      {children}
+    </div>
+  );
+};

@@ -1,0 +1,96 @@
+# LSP (Language Server Protocol) Ignore List
+# This file tells LSP servers which files and directories to skip during analysis
+
+# Dependencies and third-party code
+node_modules/
+vendor/
+vendors/
+third-party/
+3rdparty/
+external/
+lib/
+libs/
+
+# Build and distribution directories
+dist/
+build/
+out/
+.next/
+.nuxt/
+.vite/
+.cache/
+coverage/
+target/
+bin/
+obj/
+
+# Test directories (usually not needed for main code analysis)
+test/
+tests/
+__tests__/
+spec/
+specs/
+cypress/
+e2e/
+*.test.*
+*.spec.*
+
+# Generated and auto-generated files
+generated/
+auto-generated/
+codegen/
+*.generated.*
+*.auto.*
+*.min.js
+*.min.css
+*.bundle.js
+*.chunk.js
+*.map
+
+# Configuration files
+.env*
+package.json
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+tsconfig.json
+jsconfig.json
+.eslintrc*
+.prettierrc*
+.stylelintrc*
+jest.config.*
+vitest.config.*
+playwright.config.*
+
+# Documentation
+docs/
+documentation/
+*.md
+README*
+CHANGELOG*
+LICENSE*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Version control
+.git/
+
+# Logs and temporary files
+logs/
+*.log
+tmp/
+temp/
+.tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project specific
+web-eval-agent/
+server.log
+

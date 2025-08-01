@@ -1,0 +1,226 @@
+# General Analysis Tools Ignore List
+# This file is used by various code analysis tools to skip irrelevant files
+
+# Dependencies and third-party libraries
+node_modules/
+vendor/
+vendors/
+third-party/
+3rdparty/
+external/
+lib/
+libs/
+bower_components/
+jspm_packages/
+
+# Build artifacts and generated files
+dist/
+build/
+out/
+.next/
+.nuxt/
+.vite/
+.cache/
+coverage/
+target/
+bin/
+obj/
+generated/
+auto-generated/
+codegen/
+*.generated.*
+*.auto.*
+
+# Minified and bundled files
+*.min.js
+*.min.css
+*.bundle.js
+*.chunk.js
+*.map
+
+# Test files and directories
+test/
+tests/
+__tests__/
+spec/
+specs/
+cypress/
+e2e/
+*.test.js
+*.test.ts
+*.test.jsx
+*.test.tsx
+*.spec.js
+*.spec.ts
+*.spec.jsx
+*.spec.tsx
+
+# Configuration files (usually not business logic)
+package.json
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+composer.json
+composer.lock
+Gemfile
+Gemfile.lock
+requirements.txt
+poetry.lock
+Pipfile
+Pipfile.lock
+tsconfig.json
+jsconfig.json
+.eslintrc*
+.prettierrc*
+.stylelintrc*
+.babelrc*
+webpack.config.*
+rollup.config.*
+vite.config.*
+jest.config.*
+vitest.config.*
+playwright.config.*
+cypress.config.*
+
+# Environment and secrets
+.env*
+.secrets
+.credentials
+
+# Documentation files
+docs/
+documentation/
+*.md
+README*
+CHANGELOG*
+LICENSE*
+CONTRIBUTING*
+CODE_OF_CONDUCT*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Version control directories
+.git/
+.svn/
+.hg/
+.bzr/
+
+# Logs and temporary files
+logs/
+*.log
+tmp/
+temp/
+.tmp/
+.temp/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Binary and media files
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+*.img
+*.iso
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+*.rar
+*.7z
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.svg
+*.ico
+*.pdf
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mov
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.tmp
+
+# Language-specific build artifacts
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+
+# C/C++
+*.o
+*.a
+*.so
+*.exe
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Rust
+target/
+Cargo.lock
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Ruby
+*.gem
+*.rbc
+
+# Project specific ignores
+web-eval-agent/
+server.log
+

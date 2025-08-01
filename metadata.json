@@ -1,0 +1,6 @@
+{
+  "name": "CodeGen AI Project Orchestrator",
+  "description": "A dashboard to manage and automate GitHub projects using an AI agent. Select projects, trigger AI-driven code generation runs, manage settings, and validate pull requests in a streamlined interface.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

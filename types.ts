@@ -1,4 +1,3 @@
-
 export interface GithubRepo {
   id: number;
   name: string;
@@ -7,6 +6,32 @@ export interface GithubRepo {
   owner: {
     login: string;
   };
+}
+
+// Enhanced types for agent run functionality
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  avatar?: string;
+  memberCount?: number;
+  repositoryCount?: number;
+  role: 'owner' | 'admin' | 'member' | 'viewer';
+  features?: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Repository {
+  id: string;
+  name: string;
+  fullName: string;
+  description?: string;
+  private: boolean;
+  defaultBranch: string;
+  language?: string;
+  updatedAt: number;
 }
 
 export interface PullRequest {

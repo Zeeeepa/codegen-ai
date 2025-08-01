@@ -1,151 +1,170 @@
-/**
- * Enhanced storage utilities for managing application data
- * Provides type-safe localStorage operations with error handling
- */
+// Web-compatible storage utilities to replace @raycast/api LocalStorage and Cache
 
-export interface StorageOptions {
-  encrypt?: boolean;
-  compress?: boolean;
-  ttl?: number; // Time to live in milliseconds
-}
-
-export interface StorageItem<T> {
-  data: T;
-  timestamp: number;
-  ttl?: number;
-}
-
-class StorageManager {
-  private prefix = 'codegen_';
-
-  /**
-   * Store data in localStorage with optional encryption and TTL
-   */
-  set<T>(key: string, value: T, options: StorageOptions = {}): boolean {
+// LocalStorage replacement
+export class LocalStorage {
+  static async getItem<T = string>(key: string): Promise<T | undefined> {
     try {
-      const item: StorageItem<T> = {
-        data: value,
-        timestamp: Date.now(),
-        ttl: options.ttl
-      };
-
-      const serialized = JSON.stringify(item);
-      localStorage.setItem(this.prefix + key, serialized);
-      return true;
-    } catch (error) {
-      console.error('Storage set error:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Retrieve data from localStorage with TTL validation
-   */
-  get<T>(key: string, defaultValue?: T): T | undefined {
-    try {
-      const stored = localStorage.getItem(this.prefix + key);
-      if (!stored) return defaultValue;
-
-      const item: StorageItem<T> = JSON.parse(stored);
-      
-      // Check TTL expiration
-      if (item.ttl && Date.now() - item.timestamp > item.ttl) {
-        this.remove(key);
-        return defaultValue;
+      const value = localStorage.getItem(key);
+      if (value === null) {
+        return undefined;
       }
-
-      return item.data;
+      // For generic types, we assume the caller knows what they're doing
+      // In a real implementation, you might want to add JSON parsing for non-string types
+      return value as T;
     } catch (error) {
-      console.error('Storage get error:', error);
-      return defaultValue;
+      console.error(`Failed to get item from localStorage: ${key}`, error);
+      return undefined;
     }
   }
 
-  /**
-   * Remove item from localStorage
-   */
-  remove(key: string): boolean {
+  static async setItem(key: string, value: string): Promise<void> {
     try {
-      localStorage.removeItem(this.prefix + key);
-      return true;
+      localStorage.setItem(key, value);
     } catch (error) {
-      console.error('Storage remove error:', error);
-      return false;
+      console.error(`Failed to set item in localStorage: ${key}`, error);
+      throw error;
     }
   }
 
-  /**
-   * Clear all items with the app prefix
-   */
-  clear(): boolean {
+  static async removeItem(key: string): Promise<void> {
     try {
-      const keys = Object.keys(localStorage).filter(key => key.startsWith(this.prefix));
-      keys.forEach(key => localStorage.removeItem(key));
-      return true;
+      localStorage.removeItem(key);
     } catch (error) {
-      console.error('Storage clear error:', error);
-      return false;
+      console.error(`Failed to remove item from localStorage: ${key}`, error);
+      throw error;
     }
   }
 
-  /**
-   * Get all keys with the app prefix
-   */
-  keys(): string[] {
+  static async clear(): Promise<void> {
     try {
-      return Object.keys(localStorage)
-        .filter(key => key.startsWith(this.prefix))
-        .map(key => key.replace(this.prefix, ''));
+      localStorage.clear();
     } catch (error) {
-      console.error('Storage keys error:', error);
-      return [];
+      console.error('Failed to clear localStorage', error);
+      throw error;
     }
   }
 
-  /**
-   * Check if key exists and is not expired
-   */
-  has(key: string): boolean {
-    const value = this.get(key);
-    return value !== undefined;
-  }
-
-  /**
-   * Get storage usage information
-   */
-  getUsage(): { used: number; available: number; percentage: number } {
+  static async allItems(): Promise<Record<string, string>> {
     try {
-      let used = 0;
-      for (let key in localStorage) {
-        if (key.startsWith(this.prefix)) {
-          used += localStorage[key].length;
+      const items: Record<string, string> = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key) {
+          const value = localStorage.getItem(key);
+          if (value) {
+            items[key] = value;
+          }
         }
       }
-
-      // Estimate available space (5MB typical limit)
-      const available = 5 * 1024 * 1024 - used;
-      const percentage = (used / (5 * 1024 * 1024)) * 100;
-
-      return { used, available, percentage };
+      return items;
     } catch (error) {
-      console.error('Storage usage error:', error);
-      return { used: 0, available: 0, percentage: 0 };
+      console.error('Failed to get all items from localStorage', error);
+      return {};
     }
   }
 }
 
-export const storage = new StorageManager();
+// Cache replacement using localStorage with expiration
+export class Cache {
+  private readonly CACHE_PREFIX: string;
+  private readonly EXPIRY_SUFFIX = '_expiry';
+  private namespace: string;
+  private capacity: number;
 
-// Convenience functions for common operations
-export const setItem = <T>(key: string, value: T, options?: StorageOptions) => 
-  storage.set(key, value, options);
+  constructor(options?: { namespace?: string; capacity?: number }) {
+    this.namespace = options?.namespace || 'default';
+    this.capacity = options?.capacity || 10 * 1024 * 1024; // 10MB default
+    this.CACHE_PREFIX = `cache_${this.namespace}_`;
+  }
 
-export const getItem = <T>(key: string, defaultValue?: T) => 
-  storage.get<T>(key, defaultValue);
+  get(key: string): string | undefined {
+    try {
+      const cacheKey = this.CACHE_PREFIX + key;
+      const expiryKey = cacheKey + this.EXPIRY_SUFFIX;
+      
+      const expiry = localStorage.getItem(expiryKey);
+      if (expiry && Date.now() > parseInt(expiry)) {
+        // Cache expired, remove it
+        localStorage.removeItem(cacheKey);
+        localStorage.removeItem(expiryKey);
+        return undefined;
+      }
+      
+      const value = localStorage.getItem(cacheKey);
+      return value || undefined;
+    } catch (error) {
+      console.error(`Failed to get item from cache: ${key}`, error);
+      return undefined;
+    }
+  }
 
-export const removeItem = (key: string) => storage.remove(key);
+  set(key: string, value: string, ttlSeconds?: number): void {
+    try {
+      const cacheKey = this.CACHE_PREFIX + key;
+      localStorage.setItem(cacheKey, value);
+      
+      if (ttlSeconds) {
+        const expiryKey = cacheKey + this.EXPIRY_SUFFIX;
+        const expiry = Date.now() + (ttlSeconds * 1000);
+        localStorage.setItem(expiryKey, expiry.toString());
+      }
+    } catch (error) {
+      console.error(`Failed to set item in cache: ${key}`, error);
+      throw error;
+    }
+  }
 
-export const clearStorage = () => storage.clear();
+  remove(key: string): void {
+    try {
+      const cacheKey = this.CACHE_PREFIX + key;
+      const expiryKey = cacheKey + this.EXPIRY_SUFFIX;
+      localStorage.removeItem(cacheKey);
+      localStorage.removeItem(expiryKey);
+    } catch (error) {
+      console.error(`Failed to remove item from cache: ${key}`, error);
+      throw error;
+    }
+  }
 
-export const hasItem = (key: string) => storage.has(key);
+  clear(): void {
+    try {
+      const keys = Object.keys(localStorage);
+      keys.forEach(key => {
+        if (key.startsWith(this.CACHE_PREFIX)) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch (error) {
+      console.error('Failed to clear cache', error);
+      throw error;
+    }
+  }
 
+  // Static methods for backward compatibility
+  static async get(key: string): Promise<string | undefined> {
+    const cache = new Cache();
+    return cache.get(key);
+  }
+
+  static async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
+    const cache = new Cache();
+    cache.set(key, value, ttlSeconds);
+  }
+
+  static async remove(key: string): Promise<void> {
+    const cache = new Cache();
+    cache.remove(key);
+  }
+
+  static async clear(): Promise<void> {
+    const cache = new Cache();
+    cache.clear();
+  }
+}
+
+// HUD replacement (simple alert for web)
+export async function showHUD(message: string): Promise<void> {
+  console.log(`HUD: ${message}`);
+  // For web, we can use a simple alert or implement a custom HUD component
+  // For now, just log to console
+}

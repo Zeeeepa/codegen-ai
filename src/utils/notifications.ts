@@ -1,362 +1,247 @@
-/**
- * Notification system for agent runs and system events
- * Handles browser notifications, in-app notifications, and event tracking
- */
+import { showToast, ToastStyle } from "./toast";
+import { showHUD } from "./storage";
+import { AgentRunStatusChange, AgentRunStatus } from "../api/types";
 
-import { toast } from './toast';
-
-export type NotificationType = 'agent_run_started' | 'agent_run_completed' | 'agent_run_failed' | 'pr_created' | 'pr_merged' | 'system_error' | 'system_info';
-
-export interface Notification {
-  id: string;
-  type: NotificationType;
-  title: string;
-  message: string;
-  timestamp: number;
-  read: boolean;
-  data?: any;
-  actions?: NotificationAction[];
+export interface NotificationManager {
+  notifyStatusChange(change: AgentRunStatusChange): Promise<void>;
+  notifyAgentRunCreated(agentRunId: number, organizationId: number): Promise<void>;
+  initialize(): Promise<void>;
+  testNotification(): Promise<void>;
 }
 
-export interface NotificationAction {
-  label: string;
-  action: string;
-  data?: any;
-}
-
-export interface NotificationOptions {
-  persistent?: boolean;
-  showBrowserNotification?: boolean;
-  showToast?: boolean;
-  data?: any;
-  actions?: NotificationAction[];
-}
-
-class NotificationManager {
-  private notifications: Notification[] = [];
-  private listeners: ((notifications: Notification[]) => void)[] = [];
-  private nextId = 1;
-  private browserNotificationPermission: NotificationPermission = 'default';
-
-  constructor() {
-    this.initializeBrowserNotifications();
-    this.loadNotifications();
-  }
+class RaycastNotificationManager implements NotificationManager {
+  private isInitialized = false;
 
   /**
-   * Initialize browser notification permissions
+   * Initialize the notification system
    */
-  private async initializeBrowserNotifications() {
-    if ('Notification' in window) {
-      this.browserNotificationPermission = Notification.permission;
-      
-      if (this.browserNotificationPermission === 'default') {
-        try {
-          this.browserNotificationPermission = await Notification.requestPermission();
-        } catch (error) {
-          console.warn('Failed to request notification permission:', error);
-        }
-      }
+  async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      console.log("Notification system already initialized");
+      return;
     }
+
+    this.isInitialized = true;
+    console.log("Notification system initialized successfully");
   }
 
-  /**
-   * Load notifications from storage
-   */
-  private loadNotifications() {
-    try {
-      const stored = localStorage.getItem('codegen_notifications');
-      if (stored) {
-        this.notifications = JSON.parse(stored);
-        this.notifyListeners();
-      }
-    } catch (error) {
-      console.error('Failed to load notifications:', error);
-    }
-  }
-
-  /**
-   * Save notifications to storage
-   */
-  private saveNotifications() {
-    try {
-      localStorage.setItem('codegen_notifications', JSON.stringify(this.notifications));
-    } catch (error) {
-      console.error('Failed to save notifications:', error);
-    }
-  }
-
-  /**
-   * Add a new notification
-   */
-  add(
-    type: NotificationType,
-    title: string,
-    message: string,
-    options: NotificationOptions = {}
-  ): string {
-    const id = `notification-${this.nextId++}`;
-    const notification: Notification = {
-      id,
-      type,
-      title,
-      message,
-      timestamp: Date.now(),
-      read: false,
-      data: options.data,
-      actions: options.actions
-    };
-
-    this.notifications.unshift(notification);
+  async notifyStatusChange(change: AgentRunStatusChange): Promise<void> {
+    const { agentRunId, oldStatus, newStatus, webUrl } = change;
     
-    // Keep only last 100 notifications
-    if (this.notifications.length > 100) {
-      this.notifications = this.notifications.slice(0, 100);
+    console.log(`Processing status change notification for agent run ${agentRunId}: ${oldStatus} -> ${newStatus}`);
+    
+    // Determine notification style based on status
+    const { title, message, style, shouldNotify } = this.getStatusChangeNotification(
+      agentRunId,
+      oldStatus,
+      newStatus
+    );
+
+    if (!shouldNotify) {
+      console.log(`Skipping notification for agent run ${agentRunId}: ${oldStatus} -> ${newStatus} (shouldNotify=false)`);
+      return;
     }
 
-    this.saveNotifications();
-    this.notifyListeners();
+    console.log(`Sending notification for agent run ${agentRunId}: "${title}"`);
 
-    // Show browser notification if requested and permitted
-    if (options.showBrowserNotification !== false && this.browserNotificationPermission === 'granted') {
-      this.showBrowserNotification(notification);
-    }
-
-    // Show toast notification if requested
-    if (options.showToast !== false) {
-      this.showToastNotification(notification);
-    }
-
-    return id;
-  }
-
-  /**
-   * Show browser notification
-   */
-  private showBrowserNotification(notification: Notification) {
     try {
-      const browserNotification = new Notification(notification.title, {
-        body: notification.message,
-        icon: this.getNotificationIcon(notification.type),
-        tag: notification.id,
-        requireInteraction: notification.type === 'system_error'
+      await showToast({
+        style,
+        title,
+        message,
+        ...(webUrl && {
+          primaryAction: {
+            title: "View Run",
+            onAction: () => {
+              // We could implement opening the web URL here if needed
+              console.log(`Would open: ${webUrl}`);
+            }
+          }
+        })
       });
-
-      browserNotification.onclick = () => {
-        window.focus();
-        this.markAsRead(notification.id);
-        browserNotification.close();
-      };
-
-      // Auto-close after 5 seconds (except for errors)
-      if (notification.type !== 'system_error') {
-        setTimeout(() => browserNotification.close(), 5000);
-      }
+      
+      console.log(`✅ Toast notification sent successfully for agent run ${agentRunId}: ${oldStatus} -> ${newStatus}`);
+      
     } catch (error) {
-      console.error('Failed to show browser notification:', error);
-    }
-  }
-
-  /**
-   * Show toast notification
-   */
-  private showToastNotification(notification: Notification) {
-    const toastType = this.getToastType(notification.type);
-    toast[toastType](notification.title, notification.message, {
-      persistent: notification.type === 'system_error',
-      action: notification.actions?.[0] ? {
-        label: notification.actions[0].label,
-        onClick: () => this.handleNotificationAction(notification.id, notification.actions![0])
-      } : undefined
-    });
-  }
-
-  /**
-   * Get notification icon based on type
-   */
-  private getNotificationIcon(type: NotificationType): string {
-    const iconMap: Record<NotificationType, string> = {
-      agent_run_started: '🚀',
-      agent_run_completed: '✅',
-      agent_run_failed: '❌',
-      pr_created: '🔄',
-      pr_merged: '✅',
-      system_error: '⚠️',
-      system_info: 'ℹ️'
-    };
-    return iconMap[type] || 'ℹ️';
-  }
-
-  /**
-   * Get toast type based on notification type
-   */
-  private getToastType(type: NotificationType): 'success' | 'error' | 'warning' | 'info' {
-    const typeMap: Record<NotificationType, 'success' | 'error' | 'warning' | 'info'> = {
-      agent_run_started: 'info',
-      agent_run_completed: 'success',
-      agent_run_failed: 'error',
-      pr_created: 'info',
-      pr_merged: 'success',
-      system_error: 'error',
-      system_info: 'info'
-    };
-    return typeMap[type] || 'info';
-  }
-
-  /**
-   * Mark notification as read
-   */
-  markAsRead(id: string): boolean {
-    const notification = this.notifications.find(n => n.id === id);
-    if (notification && !notification.read) {
-      notification.read = true;
-      this.saveNotifications();
-      this.notifyListeners();
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Mark all notifications as read
-   */
-  markAllAsRead(): void {
-    let hasChanges = false;
-    this.notifications.forEach(notification => {
-      if (!notification.read) {
-        notification.read = true;
-        hasChanges = true;
-      }
-    });
-
-    if (hasChanges) {
-      this.saveNotifications();
-      this.notifyListeners();
-    }
-  }
-
-  /**
-   * Remove a notification
-   */
-  remove(id: string): boolean {
-    const initialLength = this.notifications.length;
-    this.notifications = this.notifications.filter(n => n.id !== id);
-    
-    if (this.notifications.length !== initialLength) {
-      this.saveNotifications();
-      this.notifyListeners();
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Clear all notifications
-   */
-  clearAll(): void {
-    this.notifications = [];
-    this.saveNotifications();
-    this.notifyListeners();
-  }
-
-  /**
-   * Get all notifications
-   */
-  getAll(): Notification[] {
-    return [...this.notifications];
-  }
-
-  /**
-   * Get unread notifications
-   */
-  getUnread(): Notification[] {
-    return this.notifications.filter(n => !n.read);
-  }
-
-  /**
-   * Get unread count
-   */
-  getUnreadCount(): number {
-    return this.notifications.filter(n => !n.read).length;
-  }
-
-  /**
-   * Subscribe to notification changes
-   */
-  subscribe(listener: (notifications: Notification[]) => void): () => void {
-    this.listeners.push(listener);
-    
-    return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
-    };
-  }
-
-  /**
-   * Notify all listeners
-   */
-  private notifyListeners(): void {
-    this.listeners.forEach(listener => listener([...this.notifications]));
-  }
-
-  /**
-   * Handle notification action
-   */
-  private handleNotificationAction(notificationId: string, action: NotificationAction): void {
-    // This can be extended to handle different action types
-    console.log('Notification action:', action.action, action.data);
-    
-    // Mark notification as read when action is taken
-    this.markAsRead(notificationId);
-  }
-
-  /**
-   * Get browser notification permission status
-   */
-  getBrowserNotificationPermission(): NotificationPermission {
-    return this.browserNotificationPermission;
-  }
-
-  /**
-   * Request browser notification permission
-   */
-  async requestBrowserNotificationPermission(): Promise<NotificationPermission> {
-    if ('Notification' in window) {
+      console.error(`❌ Failed to send toast notification for agent run ${agentRunId}:`, error);
+      
+      // Fallback to HUD notification
       try {
-        this.browserNotificationPermission = await Notification.requestPermission();
-        return this.browserNotificationPermission;
-      } catch (error) {
-        console.error('Failed to request notification permission:', error);
-        return 'denied';
+        await showHUD(title);
+        console.log(`✅ HUD fallback notification sent for agent run ${agentRunId}`);
+      } catch (hudError) {
+        console.error(`❌ Failed to send HUD notification for agent run ${agentRunId}:`, hudError);
       }
     }
-    return 'denied';
+  }
+
+  async notifyAgentRunCreated(agentRunId: number, organizationId: number): Promise<void> {
+    try {
+      await showToast({
+        style: ToastStyle.Success,
+        title: `Agent Run #${agentRunId} • Started`,
+        message: "🚀 Your agent run has been created and is now being tracked"
+      });
+      console.log(`✅ Creation notification sent for agent run ${agentRunId}`);
+    } catch (error) {
+      console.error(`❌ Failed to send creation notification for agent run ${agentRunId}:`, error);
+      
+      // Fallback to HUD
+      try {
+        await showHUD(`🚀 Agent run #${agentRunId} started`);
+      } catch (hudError) {
+        console.error(`❌ Failed to send HUD creation notification:`, hudError);
+      }
+    }
+  }
+
+  private getStatusChangeNotification(
+    agentRunId: number,
+    oldStatus: string | null,
+    newStatus: string
+  ): {
+    title: string;
+    message: string;
+    style: ToastStyle;
+    shouldNotify: boolean;
+  } {
+    // Don't notify for initial status setting or certain transitions
+    if (!oldStatus || oldStatus === newStatus) {
+      return {
+        title: "",
+        message: "",
+        style: ToastStyle.Success,
+        shouldNotify: false,
+      };
+    }
+
+    // Don't notify for intermediate states that users don't care about
+    if (newStatus === AgentRunStatus.EVALUATION) {
+      return {
+        title: "",
+        message: "",
+        style: ToastStyle.Success,
+        shouldNotify: false,
+      };
+    }
+
+    const baseTitle = `Agent Run #${agentRunId}`;
+    
+    switch (newStatus) {
+      case AgentRunStatus.COMPLETE:
+        return {
+          title: `${baseTitle} • Complete`,
+          message: "✅ Your agent run has finished successfully",
+          style: ToastStyle.Success,
+          shouldNotify: true,
+        };
+
+      case AgentRunStatus.ERROR:
+        return {
+          title: `${baseTitle} • Failed`,
+          message: "❌ Your agent run encountered an error",
+          style: ToastStyle.Failure,
+          shouldNotify: true,
+        };
+
+      case AgentRunStatus.CANCELLED:
+        return {
+          title: `${baseTitle} • Cancelled`,
+          message: "🛑 Your agent run was cancelled",
+          style: ToastStyle.Failure,
+          shouldNotify: true,
+        };
+
+      case AgentRunStatus.TIMEOUT:
+        return {
+          title: `${baseTitle} • Timed Out`,
+          message: "⏰ Your agent run exceeded the time limit",
+          style: ToastStyle.Failure,
+          shouldNotify: true,
+        };
+
+      case AgentRunStatus.MAX_ITERATIONS_REACHED:
+        return {
+          title: `${baseTitle} • Max Iterations`,
+          message: "🔄 Your agent run reached the maximum number of iterations",
+          style: ToastStyle.Failure,
+          shouldNotify: true,
+        };
+
+      case AgentRunStatus.OUT_OF_TOKENS:
+        return {
+          title: `${baseTitle} • Out of Tokens`,
+          message: "🪙 Your agent run ran out of tokens",
+          style: ToastStyle.Failure,
+          shouldNotify: true,
+        };
+
+      case AgentRunStatus.ACTIVE:
+        // Only notify if transitioning from a non-active state (like resuming)
+        if (oldStatus && oldStatus !== AgentRunStatus.ACTIVE) {
+          return {
+            title: `${baseTitle} • Active`,
+            message: "🚀 Your agent run is now active",
+            style: ToastStyle.Success,
+            shouldNotify: true,
+          };
+        }
+        return {
+          title: "",
+          message: "",
+          style: ToastStyle.Success,
+          shouldNotify: false,
+        };
+
+      default:
+        return {
+          title: `${baseTitle} • Status Changed`,
+          message: `📋 Status changed to ${newStatus}`,
+          style: ToastStyle.Success,
+          shouldNotify: true,
+        };
+    }
+  }
+
+  /**
+   * Test method - can be called manually for debugging
+   */
+  async testNotification(): Promise<void> {
+    console.log("🧪 Testing notification system...");
+    
+    try {
+      await showToast({
+        style: ToastStyle.Success,
+        title: "🧪 Test Notification",
+        message: "This is a test notification from Codegen"
+      });
+      console.log("✅ Test notification sent successfully");
+    } catch (error) {
+      console.warn("❌ Test notification failed, trying HUD fallback:", error);
+      try {
+        await showHUD("🧪 Test notification (HUD fallback)");
+        console.log("✅ HUD test notification sent");
+      } catch (hudError) {
+        console.error("❌ Both notification methods failed:", hudError);
+      }
+    }
   }
 }
 
-export const notifications = new NotificationManager();
+// Singleton instance
+let notificationManager: NotificationManager | null = null;
 
-// Convenience functions for common notification types
-export const notifyAgentRunStarted = (agentRunId: string, message: string) =>
-  notifications.add('agent_run_started', 'Agent Run Started', message, { data: { agentRunId } });
+export function getNotificationManager(): NotificationManager {
+  if (!notificationManager) {
+    notificationManager = new RaycastNotificationManager();
+    // Initialize immediately
+    notificationManager.initialize();
+  }
+  return notificationManager;
+}
 
-export const notifyAgentRunCompleted = (agentRunId: string, message: string) =>
-  notifications.add('agent_run_completed', 'Agent Run Completed', message, { data: { agentRunId } });
-
-export const notifyAgentRunFailed = (agentRunId: string, message: string) =>
-  notifications.add('agent_run_failed', 'Agent Run Failed', message, { data: { agentRunId } });
-
-export const notifyPRCreated = (prUrl: string, message: string) =>
-  notifications.add('pr_created', 'Pull Request Created', message, { 
-    data: { prUrl },
-    actions: [{ label: 'View PR', action: 'open_url', data: { url: prUrl } }]
-  });
-
-export const notifyPRMerged = (prUrl: string, message: string) =>
-  notifications.add('pr_merged', 'Pull Request Merged', message, { data: { prUrl } });
-
-export const notifySystemError = (error: string, details?: string) =>
-  notifications.add('system_error', 'System Error', details || error, { persistent: true });
-
-export const notifySystemInfo = (title: string, message: string) =>
-  notifications.add('system_info', title, message);
-
+// Global test function for easy debugging
+export async function testNotifications(): Promise<void> {
+  const manager = getNotificationManager();
+  await manager.testNotification();
+}

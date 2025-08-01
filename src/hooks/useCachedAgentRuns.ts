@@ -1,386 +1,269 @@
-/**
- * Custom hook for managing cached agent runs
- * Provides caching, real-time updates, and state management for agent runs
- */
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { showToast, ToastStyle } from "../utils/toast";
+import { AgentRunResponse, AgentRunFilters, SortOptions } from "../api/types";
+import { getAgentRunCache } from "../storage/agentRunCache";
+import { getAPIClient } from "../api/client";
+import { filterAgentRuns, sortAgentRuns } from "../utils/filtering";
+import { getDefaultOrganizationId } from "../utils/credentials";
+import { SyncStatus } from "../storage/cacheTypes";
+import { getBackgroundMonitoringService } from "../utils/backgroundMonitoring";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { storage } from '../utils/storage';
-import { preferences } from '../utils/preferences';
-import { notifications } from '../utils/notifications';
+interface UseCachedAgentRunsResult {
+  agentRuns: AgentRunResponse[];
+  filteredRuns: AgentRunResponse[];
+  isLoading: boolean;
+  isRefreshing: boolean;
+  error: string | null;
+  syncStatus: SyncStatus;
+  refresh: () => Promise<void>;
+  updateFilters: (filters: AgentRunFilters) => void;
+  updateSort: (sort: SortOptions) => void;
+  filters: AgentRunFilters;
+  sortOptions: SortOptions;
+  organizationId: number | null;
+  setOrganizationId: (orgId: number) => void;
+}
 
-export interface AgentRun {
-  id: string;
-  organizationId: string;
-  repositoryId?: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  target: string;
-  description?: string;
-  createdAt: number;
-  updatedAt: number;
-  startedAt?: number;
-  completedAt?: number;
-  duration?: number;
+export function useCachedAgentRuns(): UseCachedAgentRunsResult {
+  const [agentRuns, setAgentRuns] = useState<AgentRunResponse[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(SyncStatus.IDLE);
+  const [organizationId, setOrganizationIdState] = useState<number | null>(null);
   
-  // Agent execution details
-  steps?: AgentStep[];
-  logs?: AgentLog[];
-  plan?: AgentPlan;
-  result?: AgentResult;
-  
-  // Metadata
-  metadata?: Record<string, any>;
-  tags?: string[];
-  
-  // Progress tracking
-  progress?: {
-    current: number;
-    total: number;
-    percentage: number;
-  };
-}
-
-export interface AgentStep {
-  id: string;
-  name: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
-  startedAt?: number;
-  completedAt?: number;
-  duration?: number;
-  output?: string;
-  error?: string;
-}
-
-export interface AgentLog {
-  id: string;
-  timestamp: number;
-  level: 'debug' | 'info' | 'warn' | 'error';
-  message: string;
-  data?: any;
-}
-
-export interface AgentPlan {
-  id: string;
-  title: string;
-  description: string;
-  steps: AgentPlanStep[];
-  estimatedDuration?: number;
-  confidence: number;
-  approved: boolean;
-  approvedAt?: number;
-}
-
-export interface AgentPlanStep {
-  id: string;
-  title: string;
-  description: string;
-  confidence: number;
-  dependencies?: string[];
-  estimatedDuration?: number;
-}
-
-export interface AgentResult {
-  success: boolean;
-  summary: string;
-  artifacts?: AgentArtifact[];
-  pullRequests?: string[];
-  metrics?: Record<string, number>;
-}
-
-export interface AgentArtifact {
-  id: string;
-  type: 'file' | 'pr' | 'deployment' | 'report';
-  name: string;
-  url?: string;
-  content?: string;
-  metadata?: Record<string, any>;
-}
-
-export interface AgentRunFilters {
-  status?: AgentRun['status'][];
-  organizationId?: string;
-  repositoryId?: string;
-  tags?: string[];
-  dateRange?: {
-    start: number;
-    end: number;
-  };
-  search?: string;
-}
-
-export interface AgentRunsState {
-  runs: AgentRun[];
-  loading: boolean;
-  error?: string;
-  lastUpdated?: number;
-  hasMore: boolean;
-  total: number;
-}
-
-export interface UseCachedAgentRunsOptions {
-  autoRefresh?: boolean;
-  refreshInterval?: number;
-  maxCacheSize?: number;
-  enableRealTime?: boolean;
-}
-
-export function useCachedAgentRuns(
-  filters: AgentRunFilters = {},
-  options: UseCachedAgentRunsOptions = {}
-) {
-  const [state, setState] = useState<AgentRunsState>({
-    runs: [],
-    loading: true,
-    hasMore: true,
-    total: 0
+  // Filter and sort state
+  const [filters, setFilters] = useState<AgentRunFilters>({});
+  const [sortOptions, setSortOptions] = useState<SortOptions>({
+    field: "created_at",
+    direction: "desc",
   });
 
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(preferences.getPreference('agentRunsPerPage'));
-  
-  const cacheKeyRef = useRef<string>('');
-  const refreshIntervalRef = useRef<NodeJS.Timeout>();
-  const abortControllerRef = useRef<AbortController>();
+  const cache = getAgentRunCache();
+  const apiClient = getAPIClient();
+  const backgroundMonitoring = getBackgroundMonitoringService();
 
-  // Generate cache key based on filters
-  const generateCacheKey = useCallback((filters: AgentRunFilters, page: number): string => {
-    const filterString = JSON.stringify({ ...filters, page, pageSize });
-    return `agent_runs_${btoa(filterString)}`;
-  }, [pageSize]);
+  // Initialize organization ID and start background monitoring
+  useEffect(() => {
+    async function initializeOrgId() {
+      const defaultOrgId = await getDefaultOrganizationId();
+      console.log(`Initialized organization ID: ${defaultOrgId}`);
+      setOrganizationIdState(defaultOrgId);
+      
+      // If no default organization is set, try to get organizations and set the first one
+      if (!defaultOrgId) {
+        try {
+          const { validateCredentials } = await import("../utils/credentials");
+          const validation = await validateCredentials();
+          if (validation.isValid && validation.organizations && validation.organizations.length > 0) {
+            const firstOrg = validation.organizations[0];
+            console.log(`No default org found, using first available: ${firstOrg.name} (${firstOrg.id})`);
+            setOrganizationIdState(firstOrg.id);
+            
+            // Store as default for future use
+            localStorage.setItem("defaultOrganizationId", firstOrg.id.toString());
+            localStorage.setItem("defaultOrganization", JSON.stringify({
+              id: firstOrg.id,
+              name: firstOrg.name,
+              settings: {
+                enable_pr_creation: true,
+                enable_rules_detection: true
+              }
+            }));
+          }
+        } catch (error) {
+          console.error("Failed to auto-set default organization:", error);
+        }
+      }
+    }
+    initializeOrgId();
+
+    // Start background monitoring when the hook is first used
+    if (!backgroundMonitoring.isMonitoring()) {
+      backgroundMonitoring.start();
+    }
+
+    // Cleanup function to stop monitoring when component unmounts
+    return () => {
+      // Note: We don't stop monitoring here because other components might be using it
+      // The monitoring will continue running in the background
+    };
+  }, [backgroundMonitoring]);
 
   // Load cached data
-  const loadFromCache = useCallback((cacheKey: string): AgentRunsState | null => {
-    const cached = storage.get<AgentRunsState>(cacheKey);
-    if (!cached) return null;
-
-    const cacheExpiration = preferences.getPreference('cacheExpirationHours') * 60 * 60 * 1000;
-    const isExpired = cached.lastUpdated && (Date.now() - cached.lastUpdated) > cacheExpiration;
-    
-    return isExpired ? null : cached;
-  }, []);
-
-  // Save to cache
-  const saveToCache = useCallback((cacheKey: string, data: AgentRunsState): void => {
-    const maxCacheSize = preferences.getPreference('maxCachedAgentRuns');
-    const dataToCache = {
-      ...data,
-      runs: data.runs.slice(0, maxCacheSize),
-      lastUpdated: Date.now()
-    };
-    
-    storage.set(cacheKey, dataToCache, { ttl: preferences.getPreference('cacheExpirationHours') * 60 * 60 * 1000 });
-  }, []);
-
-  // Fetch agent runs from API
-  const fetchAgentRuns = useCallback(async (
-    filters: AgentRunFilters,
-    page: number,
-    signal?: AbortSignal
-  ): Promise<{ runs: AgentRun[]; total: number; hasMore: boolean }> => {
-    // This would be replaced with actual API call
-    const mockResponse = await new Promise<{ runs: AgentRun[]; total: number; hasMore: boolean }>((resolve) => {
-      setTimeout(() => {
-        const mockRuns: AgentRun[] = Array.from({ length: Math.min(pageSize, 50) }, (_, i) => ({
-          id: `run-${page}-${i}`,
-          organizationId: filters.organizationId || 'org-1',
-          repositoryId: filters.repositoryId,
-          status: ['pending', 'running', 'completed', 'failed'][Math.floor(Math.random() * 4)] as AgentRun['status'],
-          target: `Task ${page}-${i}`,
-          description: `Description for task ${page}-${i}`,
-          createdAt: Date.now() - Math.random() * 86400000,
-          updatedAt: Date.now() - Math.random() * 3600000,
-          progress: {
-            current: Math.floor(Math.random() * 10),
-            total: 10,
-            percentage: Math.floor(Math.random() * 100)
-          }
-        }));
-
-        resolve({
-          runs: mockRuns,
-          total: 150,
-          hasMore: page * pageSize < 150
-        });
-      }, 500);
-    });
-
-    if (signal?.aborted) {
-      throw new Error('Request aborted');
+  const loadCachedData = useCallback(async () => {
+    if (!organizationId) {
+      console.log("No organization ID set, skipping cache load");
+      return;
     }
 
-    return mockResponse;
-  }, [pageSize]);
-
-  // Load agent runs
-  const loadAgentRuns = useCallback(async (
-    filters: AgentRunFilters,
-    page: number,
-    useCache: boolean = true
-  ): Promise<void> => {
-    const cacheKey = generateCacheKey(filters, page);
-    cacheKeyRef.current = cacheKey;
-
-    // Try to load from cache first
-    if (useCache) {
-      const cached = loadFromCache(cacheKey);
-      if (cached) {
-        setState(cached);
-        return;
-      }
+    console.log(`Loading cached data for organization ${organizationId}`);
+    try {
+      const cachedRuns = await cache.getAgentRuns(organizationId);
+      console.log(`Loaded ${cachedRuns.length} cached runs for org ${organizationId}`);
+      setAgentRuns(cachedRuns);
+      
+      const status = await cache.getSyncStatus(organizationId);
+      setSyncStatus(status.status);
+    } catch (err) {
+      console.error("Error loading cached data:", err);
+      setError(err instanceof Error ? err.message : "Failed to load cached data");
     }
+  }, [organizationId, cache]);
 
-    setState(prev => ({ ...prev, loading: true, error: undefined }));
+  // Sync with API
+  const syncWithAPI = useCallback(async (showSuccessToast = false) => {
+    if (!organizationId) return;
 
     try {
-      // Cancel previous request
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+      setIsRefreshing(true);
+      setError(null);
+
+      const syncResult = await cache.syncAgentRuns(organizationId);
+      setSyncStatus(syncResult.status);
+
+      if (syncResult.status === SyncStatus.SUCCESS) {
+        const updatedRuns = await cache.getAgentRuns(organizationId);
+        setAgentRuns(updatedRuns);
+        
+        if (showSuccessToast) {
+          await showToast({
+            style: ToastStyle.Success,
+            title: "Agent Runs Updated",
+            message: `Loaded ${updatedRuns.length} agent runs`,
+          });
+        }
+      } else if (syncResult.error) {
+        setError(syncResult.error);
+        await showToast({
+          style: ToastStyle.Failure,
+          title: "Sync Failed",
+          message: syncResult.error,
+        });
       }
-
-      abortControllerRef.current = new AbortController();
-      const { runs, total, hasMore } = await fetchAgentRuns(filters, page, abortControllerRef.current.signal);
-
-      const newState: AgentRunsState = {
-        runs: page === 1 ? runs : [...state.runs, ...runs],
-        loading: false,
-        hasMore,
-        total,
-        lastUpdated: Date.now()
-      };
-
-      setState(newState);
-      saveToCache(cacheKey, newState);
-
-    } catch (error) {
-      if (error instanceof Error && error.message !== 'Request aborted') {
-        setState(prev => ({
-          ...prev,
-          loading: false,
-          error: error.message
-        }));
-      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to sync data";
+      setError(errorMessage);
+      setSyncStatus(SyncStatus.ERROR);
+      
+      await showToast({
+        style: ToastStyle.Failure,
+        title: "Sync Error",
+        message: errorMessage,
+      });
+    } finally {
+      setIsRefreshing(false);
     }
-  }, [generateCacheKey, loadFromCache, saveToCache, fetchAgentRuns, state.runs]);
+  }, [organizationId, cache]);
 
-  // Refresh data
-  const refresh = useCallback(() => {
-    loadAgentRuns(filters, 1, false);
-    setPage(1);
-  }, [filters, loadAgentRuns]);
+  // Refresh function (load cache + sync)
+  const refresh = useCallback(async () => {
+    await loadCachedData();
+    await syncWithAPI(true);
+  }, [loadCachedData, syncWithAPI]);
 
-  // Load more data
-  const loadMore = useCallback(() => {
-    if (!state.loading && state.hasMore) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-      loadAgentRuns(filters, nextPage, false);
-    }
-  }, [state.loading, state.hasMore, page, filters, loadAgentRuns]);
-
-  // Update a specific agent run
-  const updateAgentRun = useCallback((runId: string, updates: Partial<AgentRun>) => {
-    setState(prev => ({
-      ...prev,
-      runs: prev.runs.map(run => 
-        run.id === runId ? { ...run, ...updates, updatedAt: Date.now() } : run
-      )
-    }));
-
-    // Update cache
-    const cacheKey = cacheKeyRef.current;
-    if (cacheKey) {
-      const cached = loadFromCache(cacheKey);
-      if (cached) {
-        const updatedCache = {
-          ...cached,
-          runs: cached.runs.map(run => 
-            run.id === runId ? { ...run, ...updates, updatedAt: Date.now() } : run
-          )
-        };
-        saveToCache(cacheKey, updatedCache);
-      }
-    }
-  }, [loadFromCache, saveToCache]);
-
-  // Add a new agent run
-  const addAgentRun = useCallback((newRun: AgentRun) => {
-    setState(prev => ({
-      ...prev,
-      runs: [newRun, ...prev.runs],
-      total: prev.total + 1
-    }));
-
-    // Show notification
-    notifications.add('agent_run_started', 'Agent Run Started', newRun.target, {
-      data: { agentRunId: newRun.id }
-    });
+  // Update filters
+  const updateFilters = useCallback((newFilters: AgentRunFilters) => {
+    setFilters(newFilters);
   }, []);
 
-  // Remove an agent run
-  const removeAgentRun = useCallback((runId: string) => {
-    setState(prev => ({
-      ...prev,
-      runs: prev.runs.filter(run => run.id !== runId),
-      total: Math.max(0, prev.total - 1)
-    }));
+  // Update sort options
+  const updateSort = useCallback((newSort: SortOptions) => {
+    setSortOptions(newSort);
   }, []);
 
-  // Setup auto-refresh
-  useEffect(() => {
-    if (options.autoRefresh && options.refreshInterval) {
-      refreshIntervalRef.current = setInterval(() => {
-        if (!state.loading) {
-          refresh();
-        }
-      }, options.refreshInterval * 1000);
+  // Set organization ID
+  const setOrganizationId = useCallback((orgId: number) => {
+    console.log(`Setting organization ID to: ${orgId}`);
+    setOrganizationIdState(orgId);
+    setAgentRuns([]);
+    setError(null);
+    setSyncStatus(SyncStatus.IDLE);
+    
+    // Update localStorage to persist the selection
+    localStorage.setItem("defaultOrganizationId", orgId.toString());
+  }, []);
 
-      return () => {
-        if (refreshIntervalRef.current) {
-          clearInterval(refreshIntervalRef.current);
-        }
-      };
+  // Initial load
+  useEffect(() => {
+    if (organizationId) {
+      setIsLoading(true);
+      loadCachedData().finally(() => {
+        setIsLoading(false);
+        // Background sync without showing loading state
+        syncWithAPI(false);
+      });
     }
-  }, [options.autoRefresh, options.refreshInterval, state.loading, refresh]);
+  }, [organizationId, loadCachedData, syncWithAPI]);
 
-  // Initial load and filter changes
+  // Polling for active runs
   useEffect(() => {
-    loadAgentRuns(filters, 1);
-    setPage(1);
-  }, [filters, loadAgentRuns]);
+    if (!organizationId) return;
 
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
+    const pollActiveRuns = async () => {
+      try {
+        const pollingRuns = await cache.getPollingRuns(organizationId);
+        
+        if (pollingRuns.length === 0) return;
+
+        // Update each active run
+        const updatePromises = pollingRuns.map(async (run) => {
+          try {
+            const updatedRun = await apiClient.getAgentRun(organizationId, run.id);
+            await cache.updateAgentRun(organizationId, updatedRun);
+            return updatedRun;
+          } catch (err) {
+            console.warn(`Failed to update agent run ${run.id}:`, err);
+            return run;
+          }
+        });
+
+        const updatedRuns = await Promise.all(updatePromises);
+        
+        // Check if any runs changed status
+        const statusChanged = updatedRuns.some((updated, index) => 
+          updated.status !== pollingRuns[index].status
+        );
+
+        if (statusChanged) {
+          // Reload all cached data to reflect changes
+          await loadCachedData();
+        }
+      } catch (err) {
+        console.error("Error polling active runs:", err);
       }
     };
-  }, []);
+
+    // Poll every 30 seconds for active runs
+    const pollInterval = setInterval(pollActiveRuns, 30000);
+    
+    // Initial poll
+    pollActiveRuns();
+
+    return () => clearInterval(pollInterval);
+  }, [organizationId, cache, apiClient, loadCachedData]);
+
+  // Apply filters and sorting - memoized for performance
+  const filteredRuns = useMemo(() => {
+    return sortAgentRuns(
+      filterAgentRuns(agentRuns, filters),
+      sortOptions
+    );
+  }, [agentRuns, filters, sortOptions]);
 
   return {
-    // State
-    ...state,
-    
-    // Actions
+    agentRuns,
+    filteredRuns,
+    isLoading,
+    isRefreshing,
+    error,
+    syncStatus,
     refresh,
-    loadMore,
-    updateAgentRun,
-    addAgentRun,
-    removeAgentRun,
-    
-    // Pagination
-    page,
-    pageSize,
-    
-    // Utilities
-    clearCache: () => storage.remove(cacheKeyRef.current),
-    getCacheInfo: () => ({
-      cacheKey: cacheKeyRef.current,
-      lastUpdated: state.lastUpdated,
-      cacheSize: state.runs.length
-    })
+    updateFilters,
+    updateSort,
+    filters,
+    sortOptions,
+    organizationId,
+    setOrganizationId,
   };
 }
-

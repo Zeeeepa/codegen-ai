@@ -1,366 +1,285 @@
-/**
- * Organization listing and management component
- * Displays available organizations and allows switching between them
- */
+// Load environment variables first
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import { Building, Star, StarOff, Copy, RefreshCw, AlertCircle } from "lucide-react";
+import { getAPIClient } from "./api/client";
+import { validateCredentials, hasCredentials } from "./utils/credentials";
 
-import React, { useState, useEffect } from 'react';
-import { credentials } from './utils/credentials';
-import { userProfile } from './utils/userProfile';
-import { toast } from './utils/toast';
-import { Card, Button, Input, Badge, LoadingSpinner } from './components/ui';
-import { SearchIcon, BuildingIcon, UsersIcon, SettingsIcon } from './components/icons';
+import { useCurrentUser } from "./hooks/useCurrentUser";
 
-export interface Organization {
-  id: string;
+// Type for organizations from validation (simplified structure)
+type BasicOrganization = {
+  id: number;
   name: string;
-  slug: string;
-  description?: string;
-  avatar?: string;
-  memberCount?: number;
-  repositoryCount?: number;
-  role: 'owner' | 'admin' | 'member' | 'viewer';
-  features?: string[];
-  createdAt: number;
-  updatedAt: number;
-}
+};
 
-interface OrganizationListState {
-  organizations: Organization[];
-  loading: boolean;
-  error?: string;
-  selectedOrgId?: string;
-}
+export default function ListOrganizations() {
+  const [organizations, setOrganizations] = useState<BasicOrganization[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [defaultOrgId, setDefaultOrgId] = useState<number | null>(null);
+  const [searchText, setSearchText] = useState<string>("");
 
-interface ListOrganizationsProps {
-  onOrganizationSelect?: (organization: Organization) => void;
-  selectedOrganizationId?: string;
-  showActions?: boolean;
-  compact?: boolean;
-}
+  const navigate = useNavigate();
+  const apiClient = getAPIClient();
+  const { displayName: userDisplayName } = useCurrentUser();
 
-export const ListOrganizations: React.FC<ListOrganizationsProps> = ({
-  onOrganizationSelect,
-  selectedOrganizationId,
-  showActions = true,
-  compact = false
-}) => {
-  const [state, setState] = useState<OrganizationListState>({
-    organizations: [],
-    loading: true
-  });
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterRole, setFilterRole] = useState<string>('all');
-
-  // Load organizations
-  const loadOrganizations = async () => {
-    setState(prev => ({ ...prev, loading: true, error: undefined }));
-
-    try {
-      const creds = credentials.getCredentials();
-      if (!creds.CODEGEN_API_TOKEN) {
-        throw new Error('Codegen API token is required');
+  // Load organizations and default org preference
+  useEffect(() => {
+    async function loadData() {
+      if (!hasCredentials()) {
+        setError("API token not configured. Please set it in extension preferences.");
+        setIsLoading(false);
+        return;
       }
 
-      // Mock API call - replace with actual Codegen API
-      const mockOrganizations: Organization[] = [
-        {
-          id: 'org-1',
-          name: 'Acme Corporation',
-          slug: 'acme-corp',
-          description: 'Building the future of software development',
-          memberCount: 25,
-          repositoryCount: 150,
-          role: 'admin',
-          features: ['agent-runs', 'advanced-analytics', 'custom-integrations'],
-          createdAt: Date.now() - 86400000 * 30,
-          updatedAt: Date.now() - 3600000
-        },
-        {
-          id: 'org-2',
-          name: 'Startup Inc',
-          slug: 'startup-inc',
-          description: 'Fast-moving startup focused on AI automation',
-          memberCount: 8,
-          repositoryCount: 45,
-          role: 'owner',
-          features: ['agent-runs', 'basic-analytics'],
-          createdAt: Date.now() - 86400000 * 60,
-          updatedAt: Date.now() - 7200000
-        },
-        {
-          id: 'org-3',
-          name: 'Enterprise Solutions',
-          slug: 'enterprise-solutions',
-          description: 'Large-scale enterprise software solutions',
-          memberCount: 200,
-          repositoryCount: 500,
-          role: 'member',
-          features: ['agent-runs', 'advanced-analytics', 'enterprise-support'],
-          createdAt: Date.now() - 86400000 * 90,
-          updatedAt: Date.now() - 1800000
+      try {
+        // Validate credentials and get organizations
+        const validation = await validateCredentials();
+        if (!validation.isValid) {
+          setError(validation.error || "Invalid credentials");
+          setIsLoading(false);
+          return;
         }
-      ];
 
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 800));
+        if (validation.organizations) {
+          setOrganizations(validation.organizations);
+        }
 
-      setState(prev => ({
-        ...prev,
-        organizations: mockOrganizations,
-        loading: false,
-        selectedOrgId: selectedOrganizationId || mockOrganizations[0]?.id
-      }));
-
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load organizations';
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: errorMessage
-      }));
-      toast.error('Failed to load organizations', errorMessage);
+        // Load default organization preference
+        const defaultOrg = localStorage.getItem("defaultOrganizationId");
+        if (defaultOrg) {
+          setDefaultOrgId(parseInt(defaultOrg, 10));
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load organizations");
+      } finally {
+        setIsLoading(false);
+      }
     }
-  };
 
-  // Handle organization selection
-  const handleOrganizationSelect = (organization: Organization) => {
-    setState(prev => ({ ...prev, selectedOrgId: organization.id }));
-    onOrganizationSelect?.(organization);
-    toast.success('Organization selected', `Switched to ${organization.name}`);
-  };
-
-  // Filter organizations based on search and role
-  const filteredOrganizations = state.organizations.filter(org => {
-    const matchesSearch = !searchQuery || 
-      org.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      org.slug.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      org.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesRole = filterRole === 'all' || org.role === filterRole;
-    
-    return matchesSearch && matchesRole;
-  });
-
-  // Get role badge color
-  const getRoleBadgeColor = (role: Organization['role']): string => {
-    const colors = {
-      owner: 'bg-purple-100 text-purple-800',
-      admin: 'bg-blue-100 text-blue-800',
-      member: 'bg-green-100 text-green-800',
-      viewer: 'bg-gray-100 text-gray-800'
-    };
-    return colors[role];
-  };
-
-  // Format member count
-  const formatCount = (count: number): string => {
-    if (count >= 1000) {
-      return `${(count / 1000).toFixed(1)}k`;
-    }
-    return count.toString();
-  };
-
-  // Load organizations on mount
-  useEffect(() => {
-    loadOrganizations();
+    loadData();
   }, []);
 
-  if (state.loading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <LoadingSpinner size="lg" />
-        <span className="ml-3 text-gray-600">Loading organizations...</span>
-      </div>
-    );
-  }
+  // Set default organization
+  const setDefaultOrganization = async (orgId: number) => {
+    try {
+      const selectedOrg = organizations.find(org => org.id === orgId);
+      
+      // Store both the ID and the full organization data
+      localStorage.setItem("defaultOrganizationId", orgId.toString());
+      if (selectedOrg) {
+        localStorage.setItem("defaultOrganization", JSON.stringify(selectedOrg));
+      }
+      
+      setDefaultOrgId(orgId);
+      
+      toast.success(`${selectedOrg?.name || 'Organization'} will be used as default for new agent runs`, {
+        duration: 4000,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to set default organization");
+    }
+  };
 
-  if (state.error) {
-    return (
-      <div className="p-6 text-center">
-        <div className="text-red-600 mb-4">
-          <BuildingIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
-          <p className="font-medium">Failed to load organizations</p>
-          <p className="text-sm text-gray-500 mt-1">{state.error}</p>
-        </div>
-        <Button onClick={loadOrganizations} variant="outline">
-          Try Again
-        </Button>
-      </div>
-    );
-  }
+  // Clear default organization
+  const clearDefaultOrganization = async () => {
+    try {
+      localStorage.removeItem("defaultOrganizationId");
+      localStorage.removeItem("defaultOrganization");
+      setDefaultOrgId(null);
+      
+      toast.success("No default organization is set");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to clear default organization");
+    }
+  };
 
-  if (compact) {
+  // Refresh organizations
+  const refresh = async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const validation = await validateCredentials();
+      if (validation.isValid && validation.organizations) {
+        setOrganizations(validation.organizations);
+      } else {
+        setError(validation.error || "Failed to load organizations");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh organizations");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (error && !isLoading) {
     return (
-      <div className="space-y-2">
-        {filteredOrganizations.map(org => (
-          <div
-            key={org.id}
-            className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
-              state.selectedOrgId === org.id
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-            }`}
-            onClick={() => handleOrganizationSelect(org)}
+      <div className="container mx-auto p-6">
+        <div className="text-center py-12">
+          <AlertCircle className="mx-auto h-12 w-12 text-red-500 mb-4" />
+          <h3 className="text-lg font-medium text-white mb-2">Error Loading Organizations</h3>
+          <p className="text-gray-500 mb-4">{error}</p>
+          <button
+            onClick={refresh}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
           >
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white text-sm font-medium">
-                {org.name.charAt(0)}
-              </div>
-              <div>
-                <p className="font-medium text-gray-900">{org.name}</p>
-                <p className="text-sm text-gray-500">{org.slug}</p>
-              </div>
-            </div>
-            <Badge className={getRoleBadgeColor(org.role)}>
-              {org.role}
-            </Badge>
-          </div>
-        ))}
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
+
+  const navigationTitle = userDisplayName ? `Organizations - ${userDisplayName}` : "Organizations";
+
+  // Filter organizations based on search text
+  const filteredOrganizations = organizations.filter(org =>
+    org.name.toLowerCase().includes(searchText.toLowerCase())
+  );
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Organizations</h2>
-          <p className="text-gray-600 mt-1">
-            Select an organization to manage projects and agent runs
-          </p>
-        </div>
-        {showActions && (
-          <Button onClick={loadOrganizations} variant="outline">
-            Refresh
-          </Button>
-        )}
+    <div className="container mx-auto p-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-white">{navigationTitle}</h1>
+        <input
+          type="text"
+          placeholder="Search organizations..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          className="mt-4 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+        />
       </div>
-
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="flex-1">
-          <div className="relative">
-            <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <Input
-              type="text"
-              placeholder="Search organizations..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-        </div>
-        <select
-          value={filterRole}
-          onChange={(e) => setFilterRole(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-        >
-          <option value="all">All Roles</option>
-          <option value="owner">Owner</option>
-          <option value="admin">Admin</option>
-          <option value="member">Member</option>
-          <option value="viewer">Viewer</option>
-        </select>
-      </div>
-
-      {/* Organizations Grid */}
-      {filteredOrganizations.length === 0 ? (
+      
+      {isLoading ? (
         <div className="text-center py-12">
-          <BuildingIcon className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-          <p className="text-gray-600 font-medium">No organizations found</p>
-          <p className="text-gray-500 text-sm mt-1">
-            {searchQuery || filterRole !== 'all' 
-              ? 'Try adjusting your search or filters'
-              : 'You don\'t have access to any organizations yet'
-            }
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-2 text-gray-500">Loading organizations...</p>
+        </div>
+      ) : filteredOrganizations.length === 0 ? (
+        <div className="text-center py-12">
+          <Building className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+          <h3 className="text-lg font-medium text-white mb-2">
+            {searchText ? "No Matching Organizations" : "No Organizations Found"}
+          </h3>
+          <p className="text-gray-500 mb-4">
+            {searchText ? "Try adjusting your search terms" : "You don't have access to any organizations"}
           </p>
+          <button
+            onClick={refresh}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredOrganizations.map(org => (
-            <Card
+        <div className="grid gap-4">{
+        filteredOrganizations.map((org) => {
+          const isDefault = defaultOrgId === org.id;
+          
+          const copyToClipboard = async (text: string, label: string) => {
+            try {
+              await navigator.clipboard.writeText(text);
+              toast.success(`${label} copied to clipboard`);
+            } catch (error) {
+              toast.error(`Failed to copy ${label.toLowerCase()}`);
+            }
+          };
+          
+          return (
+            <div
               key={org.id}
-              className={`cursor-pointer transition-all duration-200 hover:shadow-lg ${
-                state.selectedOrgId === org.id
-                  ? 'ring-2 ring-blue-500 shadow-lg'
-                  : 'hover:shadow-md'
-              }`}
-              onClick={() => handleOrganizationSelect(org)}
+              className="bg-black rounded-lg border border-gray-700 p-6 hover:shadow-md transition-shadow"
             >
-              <div className="p-6">
-                {/* Organization Header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center text-white text-lg font-bold">
-                      {org.name.charAt(0)}
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900">{org.name}</h3>
-                      <p className="text-sm text-gray-500">@{org.slug}</p>
-                    </div>
-                  </div>
-                  <Badge className={getRoleBadgeColor(org.role)}>
-                    {org.role}
-                  </Badge>
-                </div>
-
-                {/* Description */}
-                {org.description && (
-                  <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-                    {org.description}
-                  </p>
-                )}
-
-                {/* Stats */}
-                <div className="flex items-center justify-between text-sm text-gray-500 mb-4">
-                  <div className="flex items-center space-x-1">
-                    <UsersIcon className="w-4 h-4" />
-                    <span>{formatCount(org.memberCount || 0)} members</span>
-                  </div>
-                  <div className="flex items-center space-x-1">
-                    <BuildingIcon className="w-4 h-4" />
-                    <span>{formatCount(org.repositoryCount || 0)} repos</span>
-                  </div>
-                </div>
-
-                {/* Features */}
-                {org.features && org.features.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {org.features.slice(0, 3).map(feature => (
-                      <Badge
-                        key={feature}
-                        variant="secondary"
-                        className="text-xs"
-                      >
-                        {feature.replace('-', ' ')}
-                      </Badge>
-                    ))}
-                    {org.features.length > 3 && (
-                      <Badge variant="secondary" className="text-xs">
-                        +{org.features.length - 3} more
-                      </Badge>
+              <div className="flex items-start justify-between">
+                <div className="flex items-center space-x-3">
+                  {isDefault ? (
+                    <Star className="h-5 w-5 text-yellow-500 fill-current" />
+                  ) : (
+                    <Building className="h-5 w-5 text-gray-400" />
+                  )}
+                  <div>
+                    <h3 className="text-lg font-medium text-white">{org.name}</h3>
+                    <p className="text-sm text-gray-400">Organization ID: {org.id}</p>
+                    {isDefault && (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-900 text-yellow-200 mt-1">
+                        <Star className="h-3 w-3 mr-1" />
+                        Default
+                      </span>
                     )}
                   </div>
-                )}
-
-                {/* Selection Indicator */}
-                {state.selectedOrgId === org.id && (
-                  <div className="mt-4 pt-4 border-t border-gray-200">
-                    <div className="flex items-center text-blue-600 text-sm font-medium">
-                      <div className="w-2 h-2 bg-blue-600 rounded-full mr-2"></div>
-                      Currently selected
-                    </div>
-                  </div>
-                )}
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  {!isDefault ? (
+                    <button
+                      onClick={() => setDefaultOrganization(org.id)}
+                      className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-yellow-200 bg-yellow-900 hover:bg-yellow-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 focus:ring-offset-gray-800"
+                      title="Set as Default (Cmd+D)"
+                    >
+                      <Star className="h-3 w-3 mr-1" />
+                      Set Default
+                    </button>
+                  ) : (
+                    <button
+                      onClick={clearDefaultOrganization}
+                      className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-gray-300 bg-gray-700 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 focus:ring-offset-gray-800"
+                      title="Clear Default (Cmd+D)"
+                    >
+                      <StarOff className="h-3 w-3 mr-1" />
+                      Clear Default
+                    </button>
+                  )}
+                  
+                  <button
+                    onClick={() => copyToClipboard(org.id.toString(), "Organization ID")}
+                    className="inline-flex items-center px-3 py-1.5 border border-gray-600 text-xs font-medium rounded text-gray-300 bg-gray-700 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-gray-800"
+                    title="Copy Organization ID (Cmd+C)"
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copy ID
+                  </button>
+                  
+                  <button
+                    onClick={() => copyToClipboard(org.name, "Organization Name")}
+                    className="inline-flex items-center px-3 py-1.5 border border-gray-600 text-xs font-medium rounded text-gray-300 bg-gray-700 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-gray-800"
+                    title="Copy Organization Name (Cmd+Shift+C)"
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copy Name
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      // Use apiClient to check organization details
+                      console.log('API Client available:', !!apiClient);
+                      // Navigate to agent runs for this organization
+                      navigate('/list-agent-runs');
+                    }}
+                    className="inline-flex items-center px-3 py-1.5 border border-blue-300 text-xs font-medium rounded text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    title="View Agent Runs"
+                  >
+                    View Runs
+                  </button>
+                  
+                  <button
+                    onClick={refresh}
+                    className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    title="Refresh (Cmd+R)"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                </div>
               </div>
-            </Card>
-          ))}
-        </div>
+            </div>
+          );
+        })
+        }</div>
       )}
     </div>
   );
-};
-
-export default ListOrganizations;
-
+}

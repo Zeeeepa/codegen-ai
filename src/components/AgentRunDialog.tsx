@@ -1,440 +1,231 @@
-/**
- * Agent Run Dialog Component
- * Modal dialog for viewing and managing individual agent runs
- */
-
-import React, { useState, useEffect } from 'react';
-import { Modal, Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent, LoadingSpinner } from './ui';
-import { 
-  XIcon, 
-  PlayIcon, 
-  PauseIcon, 
-  StopIcon, 
-  RefreshIcon,
-  ClockIcon,
-  CheckCircleIcon,
-  XCircleIcon,
-  AlertCircleIcon,
-  FileTextIcon,
-  GitBranchIcon,
-  SettingsIcon
-} from './icons';
-import type { AgentRun, AgentStep, AgentLog } from '../hooks/useCachedAgentRuns';
+import React, { useState, useEffect, useCallback } from 'react';
+import { X, Play, AlertCircle } from 'lucide-react';
+import { CachedProject } from '../api/types';
+import { getAPIClient } from '../api/client';
+import { getProjectSettings } from '../storage/projectSettings';
+import { getPreferenceValues } from '../utils/preferences';
+import { associateAgentRunWithProject } from '../storage/projectCache';
+import { validateCredentials } from '../utils/credentials';
+import toast from 'react-hot-toast';
 
 interface AgentRunDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  agentRun: AgentRun;
-  onAgentRunUpdate?: (agentRun: AgentRun) => void;
+  project: CachedProject;
+  autoConfirm: boolean;
 }
 
-const STATUS_COLORS = {
-  pending: 'bg-yellow-100 text-yellow-800',
-  running: 'bg-blue-100 text-blue-800',
-  completed: 'bg-green-100 text-green-800',
-  failed: 'bg-red-100 text-red-800',
-  cancelled: 'bg-gray-100 text-gray-800'
-};
+export function AgentRunDialog({ isOpen, onClose, project, autoConfirm }: AgentRunDialogProps) {
+  const [target, setTarget] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [planningStatement, setPlanningStatement] = useState('');
+  const [organizationId, setOrganizationId] = useState<number | null>(null);
 
-const STATUS_ICONS = {
-  pending: ClockIcon,
-  running: PlayIcon,
-  completed: CheckCircleIcon,
-  failed: XCircleIcon,
-  cancelled: StopIcon
-};
+  const loadPlanningStatement = useCallback(async () => {
+    try {
+      const preferences = await getPreferenceValues();
+      const projectSettings = await getProjectSettings(project.id);
+      
+      // Use project-specific planning statement if available, otherwise use global
+      const statement = projectSettings.planningStatement || preferences.planningStatement || '';
+      setPlanningStatement(statement);
+    } catch (error) {
+      console.error('Failed to load planning statement:', error);
+    }
+  }, [project.id]);
 
-const STEP_STATUS_COLORS = {
-  pending: 'text-gray-400',
-  running: 'text-blue-600',
-  completed: 'text-green-600',
-  failed: 'text-red-600',
-  skipped: 'text-gray-400'
-};
+  // Load organization ID
+  const loadOrganization = useCallback(async () => {
+    try {
+      const validation = await validateCredentials();
+      if (validation.organizations && validation.organizations.length > 0) {
+        setOrganizationId(validation.organizations[0].id);
+      }
+    } catch (error) {
+      console.error('Failed to load organization:', error);
+    }
+  }, []);
 
-export const AgentRunDialog: React.FC<AgentRunDialogProps> = ({
-  isOpen,
-  onClose,
-  agentRun,
-  onAgentRunUpdate
-}) => {
-  const [activeTab, setActiveTab] = useState('overview');
-  const [isLoading, setIsLoading] = useState(false);
-  const [logs, setLogs] = useState<AgentLog[]>([]);
-  const [steps, setSteps] = useState<AgentStep[]>([]);
-
-  const StatusIcon = STATUS_ICONS[agentRun.status];
-
-  // Load detailed data when dialog opens
   useEffect(() => {
     if (isOpen) {
-      loadAgentRunDetails();
+      loadPlanningStatement();
+      loadOrganization();
     }
-  }, [isOpen, agentRun.id]);
+  }, [isOpen, loadPlanningStatement, loadOrganization]);
 
-  const loadAgentRunDetails = async () => {
-    setIsLoading(true);
-    try {
-      // Mock API calls - replace with actual API
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Mock steps
-      const mockSteps: AgentStep[] = [
-        {
-          id: 'step-1',
-          name: 'Analyze codebase',
-          status: 'completed',
-          startedAt: Date.now() - 120000,
-          completedAt: Date.now() - 90000,
-          duration: 30000,
-          output: 'Successfully analyzed 45 files and identified key components'
-        },
-        {
-          id: 'step-2',
-          name: 'Generate implementation plan',
-          status: 'completed',
-          startedAt: Date.now() - 90000,
-          completedAt: Date.now() - 60000,
-          duration: 30000,
-          output: 'Created detailed plan with 5 implementation steps'
-        },
-        {
-          id: 'step-3',
-          name: 'Implement changes',
-          status: agentRun.status === 'running' ? 'running' : agentRun.status === 'completed' ? 'completed' : 'pending',
-          startedAt: agentRun.status !== 'pending' ? Date.now() - 60000 : undefined,
-          completedAt: agentRun.status === 'completed' ? Date.now() - 30000 : undefined,
-          duration: agentRun.status === 'completed' ? 30000 : undefined,
-          output: agentRun.status === 'completed' ? 'Successfully implemented all required changes' : undefined
-        },
-        {
-          id: 'step-4',
-          name: 'Run tests',
-          status: agentRun.status === 'completed' ? 'completed' : 'pending',
-          startedAt: agentRun.status === 'completed' ? Date.now() - 30000 : undefined,
-          completedAt: agentRun.status === 'completed' ? Date.now() - 15000 : undefined,
-          duration: agentRun.status === 'completed' ? 15000 : undefined,
-          output: agentRun.status === 'completed' ? 'All tests passed successfully' : undefined
-        },
-        {
-          id: 'step-5',
-          name: 'Create pull request',
-          status: agentRun.status === 'completed' ? 'completed' : 'pending',
-          startedAt: agentRun.status === 'completed' ? Date.now() - 15000 : undefined,
-          completedAt: agentRun.status === 'completed' ? Date.now() : undefined,
-          duration: agentRun.status === 'completed' ? 15000 : undefined,
-          output: agentRun.status === 'completed' ? 'Pull request created: #123' : undefined
-        }
-      ];
 
-      // Mock logs
-      const mockLogs: AgentLog[] = [
-        {
-          id: 'log-1',
-          timestamp: Date.now() - 120000,
-          level: 'info',
-          message: 'Starting agent run execution',
-          data: { runId: agentRun.id }
-        },
-        {
-          id: 'log-2',
-          timestamp: Date.now() - 115000,
-          level: 'info',
-          message: 'Analyzing repository structure',
-          data: { fileCount: 45 }
-        },
-        {
-          id: 'log-3',
-          timestamp: Date.now() - 110000,
-          level: 'debug',
-          message: 'Found TypeScript configuration',
-          data: { configFile: 'tsconfig.json' }
-        },
-        {
-          id: 'log-4',
-          timestamp: Date.now() - 105000,
-          level: 'info',
-          message: 'Identified key components for modification',
-          data: { components: ['App.tsx', 'components/ui.tsx'] }
-        },
-        {
-          id: 'log-5',
-          timestamp: Date.now() - 90000,
-          level: 'info',
-          message: 'Generated implementation plan',
-          data: { stepCount: 5 }
-        }
-      ];
 
-      setSteps(mockSteps);
-      setLogs(mockLogs);
-    } catch (error) {
-      console.error('Failed to load agent run details:', error);
-    } finally {
-      setIsLoading(false);
+  const handleSubmit = async () => {
+    if (!target.trim()) {
+      toast.error('Please enter a target for the agent run');
+      return;
     }
-  };
 
-  const handleAction = async (action: 'pause' | 'resume' | 'cancel') => {
+    setIsSubmitting(true);
     try {
-      // Mock API call
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const apiClient = getAPIClient();
       
-      let newStatus: AgentRun['status'];
-      switch (action) {
-        case 'pause':
-          newStatus = 'pending';
-          break;
-        case 'resume':
-          newStatus = 'running';
-          break;
-        case 'cancel':
-          newStatus = 'cancelled';
-          break;
-        default:
-          return;
+      // Construct the full prompt with planning statement and project context
+      let fullPrompt = '';
+      
+      // Add planning statement if available
+      if (planningStatement.trim()) {
+        fullPrompt += `${planningStatement.trim()}\n\n`;
+      }
+      
+      // Add project context
+      fullPrompt += `Project: ${project.htmlUrl}\n\n`;
+      
+      // Add user target
+      fullPrompt += target.trim();
+
+      console.log('Creating agent run with prompt:', fullPrompt);
+
+      // Create the agent run
+      if (!organizationId) {
+        throw new Error('No organization available');
+      }
+      
+      const agentRun = await apiClient.createAgentRun(organizationId, {
+        prompt: fullPrompt,
+      });
+
+      // Associate the agent run with the project
+      await associateAgentRunWithProject(project.id, agentRun.id);
+
+      toast.success(`Agent run created successfully! ID: ${agentRun.id}`);
+      
+      // Open the agent run in a new tab
+      if (agentRun.web_url) {
+        window.open(agentRun.web_url, '_blank');
       }
 
-      const updatedRun = { ...agentRun, status: newStatus, updatedAt: Date.now() };
-      onAgentRunUpdate?.(updatedRun);
+      // Reset form and close dialog
+      setTarget('');
+      onClose();
     } catch (error) {
-      console.error(`Failed to ${action} agent run:`, error);
+      console.error('Failed to create agent run:', error);
+      toast.error('Failed to create agent run. Please check your API configuration.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const formatDuration = (duration?: number): string => {
-    if (!duration) return 'N/A';
-    
-    const minutes = Math.floor(duration / 60000);
-    const seconds = Math.floor((duration % 60000) / 1000);
-    
-    if (minutes > 0) {
-      return `${minutes}m ${seconds}s`;
-    }
-    return `${seconds}s`;
-  };
-
-  const formatTimestamp = (timestamp: number): string => {
-    return new Date(timestamp).toLocaleString();
-  };
-
-  const getLogLevelColor = (level: AgentLog['level']): string => {
-    const colors = {
-      debug: 'text-gray-500',
-      info: 'text-blue-600',
-      warn: 'text-yellow-600',
-      error: 'text-red-600'
-    };
-    return colors[level];
-  };
+  if (!isOpen) return null;
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="xl">
-      <div className="flex items-center justify-between p-6 border-b border-gray-200">
-        <div className="flex items-center space-x-3">
-          <StatusIcon className="w-6 h-6 text-gray-400" />
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">Agent Run Details</h2>
-            <p className="text-sm text-gray-500">ID: {agentRun.id}</p>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-gray-900 rounded-lg border border-gray-700 w-full max-w-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-700">
+          <div className="flex items-center space-x-3">
+            <Play className="h-6 w-6 text-blue-400" />
+            <div>
+              <h2 className="text-xl font-semibold text-white">Create Agent Run</h2>
+              <p className="text-sm text-gray-400">{project.name}</p>
+            </div>
           </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white transition-colors"
+          >
+            <X className="h-6 w-6" />
+          </button>
         </div>
-        <div className="flex items-center space-x-2">
-          {agentRun.status === 'running' && (
-            <>
-              <Button onClick={() => handleAction('pause')} variant="outline" size="sm">
-                <PauseIcon className="w-4 h-4 mr-2" />
-                Pause
-              </Button>
-              <Button onClick={() => handleAction('cancel')} variant="outline" size="sm">
-                <StopIcon className="w-4 h-4 mr-2" />
-                Cancel
-              </Button>
-            </>
+
+        {/* Content */}
+        <div className="p-6 space-y-6">
+          {/* Auto Confirm Notice */}
+          {autoConfirm && (
+            <div className="p-4 bg-blue-900/20 border border-blue-700 rounded-lg">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="h-5 w-5 text-blue-400" />
+                <p className="text-blue-300 text-sm">
+                  Auto-confirm is enabled for this project. The agent will automatically confirm proposed plans.
+                </p>
+              </div>
+            </div>
           )}
-          {agentRun.status === 'pending' && (
-            <Button onClick={() => handleAction('resume')} variant="outline" size="sm">
-              <PlayIcon className="w-4 h-4 mr-2" />
-              Resume
-            </Button>
+
+          {/* Planning Statement Preview */}
+          {planningStatement && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-300">
+                Planning Statement (will be prepended to your target)
+              </label>
+              <div className="p-3 bg-gray-800 border border-gray-600 rounded-md">
+                <p className="text-sm text-gray-300 whitespace-pre-wrap">
+                  {planningStatement}
+                </p>
+              </div>
+            </div>
           )}
-          <Button onClick={loadAgentRunDetails} variant="outline" size="sm">
-            <RefreshIcon className="w-4 h-4" />
-          </Button>
-          <Button onClick={onClose} variant="ghost" size="sm">
-            <XIcon className="w-5 h-5" />
-          </Button>
+
+          {/* Project Context */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-300">
+              Project Context (automatically included)
+            </label>
+            <div className="p-3 bg-gray-800 border border-gray-600 rounded-md">
+              <p className="text-sm text-gray-300">
+                Project: {project.htmlUrl}
+              </p>
+            </div>
+          </div>
+
+          {/* Target Input */}
+          <div className="space-y-2">
+            <label htmlFor="target" className="block text-sm font-medium text-gray-300">
+              Target *
+            </label>
+            <textarea
+              id="target"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder="Describe what you want the agent to accomplish in this project..."
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              rows={6}
+            />
+            <p className="text-xs text-gray-500">
+              Be specific about what you want the agent to do. This will be combined with the planning statement and project context.
+            </p>
+          </div>
+
+          {/* Full Prompt Preview */}
+          {target.trim() && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-300">
+                Full Prompt Preview
+              </label>
+              <div className="p-3 bg-gray-800 border border-gray-600 rounded-md max-h-32 overflow-y-auto">
+                <pre className="text-sm text-gray-300 whitespace-pre-wrap">
+                  {planningStatement.trim() && `${planningStatement.trim()}\n\n`}
+                  Project: {project.htmlUrl}
+                  {'\n\n'}
+                  {target.trim()}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end space-x-3 p-6 border-t border-gray-700">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 border border-gray-600 text-sm font-medium rounded-md text-gray-300 bg-gray-700 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!target.trim() || isSubmitting}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+          >
+            {isSubmitting ? 'Creating...' : 'Create Agent Run'}
+          </button>
         </div>
       </div>
-
-      <div className="flex-1 overflow-hidden">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-          <TabsList className="px-6 pt-4">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="steps">Steps</TabsTrigger>
-            <TabsTrigger value="logs">Logs</TabsTrigger>
-            <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
-          </TabsList>
-
-          <div className="flex-1 overflow-y-auto">
-            <TabsContent value="overview" className="p-6 space-y-6">
-              {/* Status and Progress */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Status</label>
-                  <Badge className={STATUS_COLORS[agentRun.status]}>
-                    {agentRun.status}
-                  </Badge>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Duration</label>
-                  <p className="text-sm text-gray-900">{formatDuration(agentRun.duration)}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Progress</label>
-                  <div className="flex items-center space-x-2">
-                    <div className="flex-1 bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${agentRun.progress?.percentage || 0}%` }}
-                      />
-                    </div>
-                    <span className="text-sm text-gray-600">
-                      {agentRun.progress?.percentage || 0}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Target and Description */}
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Target</label>
-                  <p className="mt-1 text-sm text-gray-900 bg-gray-50 p-3 rounded-lg">
-                    {agentRun.target}
-                  </p>
-                </div>
-                {agentRun.description && (
-                  <div>
-                    <label className="text-sm font-medium text-gray-700">Description</label>
-                    <p className="mt-1 text-sm text-gray-900 bg-gray-50 p-3 rounded-lg">
-                      {agentRun.description}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Metadata */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Created</label>
-                  <p className="text-sm text-gray-900">{formatTimestamp(agentRun.createdAt)}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">Last Updated</label>
-                  <p className="text-sm text-gray-900">{formatTimestamp(agentRun.updatedAt)}</p>
-                </div>
-              </div>
-
-              {/* Tags */}
-              {agentRun.tags && agentRun.tags.length > 0 && (
-                <div>
-                  <label className="text-sm font-medium text-gray-700 mb-2 block">Tags</label>
-                  <div className="flex flex-wrap gap-2">
-                    {agentRun.tags.map(tag => (
-                      <Badge key={tag} variant="secondary">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="steps" className="p-6">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <LoadingSpinner size="lg" />
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {steps.map((step, index) => (
-                    <div key={step.id} className="border border-gray-200 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-3">
-                          <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm font-medium ${
-                            step.status === 'completed' ? 'border-green-500 bg-green-50 text-green-700' :
-                            step.status === 'running' ? 'border-blue-500 bg-blue-50 text-blue-700' :
-                            step.status === 'failed' ? 'border-red-500 bg-red-50 text-red-700' :
-                            'border-gray-300 bg-gray-50 text-gray-500'
-                          }`}>
-                            {index + 1}
-                          </div>
-                          <h3 className="font-medium text-gray-900">{step.name}</h3>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Badge className={`${STATUS_COLORS[step.status]} text-xs`}>
-                            {step.status}
-                          </Badge>
-                          {step.duration && (
-                            <span className="text-xs text-gray-500">
-                              {formatDuration(step.duration)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {step.output && (
-                        <div className="mt-3 p-3 bg-gray-50 rounded text-sm text-gray-700">
-                          {step.output}
-                        </div>
-                      )}
-                      
-                      {step.error && (
-                        <div className="mt-3 p-3 bg-red-50 rounded text-sm text-red-700">
-                          <strong>Error:</strong> {step.error}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="logs" className="p-6">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <LoadingSpinner size="lg" />
-                </div>
-              ) : (
-                <div className="space-y-2 font-mono text-sm">
-                  {logs.map(log => (
-                    <div key={log.id} className="flex items-start space-x-3 py-1">
-                      <span className="text-gray-500 text-xs whitespace-nowrap">
-                        {new Date(log.timestamp).toLocaleTimeString()}
-                      </span>
-                      <span className={`text-xs font-medium uppercase ${getLogLevelColor(log.level)}`}>
-                        {log.level}
-                      </span>
-                      <span className="text-gray-900 flex-1">{log.message}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="artifacts" className="p-6">
-              <div className="text-center py-8 text-gray-500">
-                <FileTextIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>No artifacts available yet</p>
-                <p className="text-sm mt-1">Artifacts will appear here when the agent run completes</p>
-              </div>
-            </TabsContent>
-          </div>
-        </Tabs>
-      </div>
-    </Modal>
+    </div>
   );
-};
-
-export default AgentRunDialog;
-
+}

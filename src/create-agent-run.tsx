@@ -1,608 +1,340 @@
-/**
- * Agent run creation component
- * Provides interface for creating and configuring new agent runs
- */
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import { Rocket, Clipboard as ClipboardIcon, Settings } from "lucide-react";
+import { getAPIClient } from "./api/client";
+import { getAgentRunCache } from "./storage/agentRunCache";
+import { validateCredentials, hasCredentials } from "./utils/credentials";
+import { OrganizationResponse } from "./api/types";
+import { useCachedAgentRuns } from "./hooks/useCachedAgentRuns";
+import { getBackgroundMonitoringService } from "./utils/backgroundMonitoring";
+import { useCurrentUser } from "./hooks/useCurrentUser";
 
-import React, { useState, useEffect } from 'react';
-import { credentials } from './utils/credentials';
-import { userProfile } from './utils/userProfile';
-import { toast } from './utils/toast';
-import { notifications } from './utils/notifications';
-import { Card, Button, Input, Textarea, Select, Badge, LoadingSpinner } from './components/ui';
-import { PlayIcon, SettingsIcon, TagIcon, ClockIcon, TargetIcon } from './components/icons';
-import type { AgentRun } from './hooks/useCachedAgentRuns';
-
-export interface Repository {
-  id: string;
-  name: string;
-  fullName: string;
-  description?: string;
-  private: boolean;
-  defaultBranch: string;
-  language?: string;
-  updatedAt: number;
-}
-
-export interface AgentRunTemplate {
-  id: string;
-  name: string;
-  description: string;
-  target: string;
-  tags: string[];
-  estimatedDuration?: number;
-  difficulty: 'easy' | 'medium' | 'hard';
-}
-
-interface CreateAgentRunState {
-  loading: boolean;
-  submitting: boolean;
-  error?: string;
-  repositories: Repository[];
-  templates: AgentRunTemplate[];
-}
-
-interface CreateAgentRunForm {
+interface FormValues {
+  prompt: string;
   organizationId: string;
-  repositoryId?: string;
-  target: string;
-  description: string;
-  tags: string[];
-  priority: 'low' | 'normal' | 'high' | 'urgent';
-  autoConfirmPlan: boolean;
-  autoMergePR: boolean;
-  templateId?: string;
+  attachClipboard: boolean;
 }
 
-interface CreateAgentRunProps {
-  organizationId: string;
-  onAgentRunCreated?: (agentRun: AgentRun) => void;
-  onCancel?: () => void;
-  initialValues?: Partial<CreateAgentRunForm>;
-  showRepositorySelector?: boolean;
-}
 
-const DEFAULT_FORM_VALUES: CreateAgentRunForm = {
-  organizationId: '',
-  target: '',
-  description: '',
-  tags: [],
-  priority: 'normal',
-  autoConfirmPlan: false,
-  autoMergePR: false
-};
 
-const AGENT_RUN_TEMPLATES: AgentRunTemplate[] = [
-  {
-    id: 'bug-fix',
-    name: 'Bug Fix',
-    description: 'Fix a specific bug or issue in the codebase',
-    target: 'Fix the bug described in issue #{{issue_number}}',
-    tags: ['bug', 'fix'],
-    estimatedDuration: 30,
-    difficulty: 'medium'
-  },
-  {
-    id: 'feature-implementation',
-    name: 'Feature Implementation',
-    description: 'Implement a new feature or enhancement',
-    target: 'Implement {{feature_name}} feature with the following requirements: {{requirements}}',
-    tags: ['feature', 'enhancement'],
-    estimatedDuration: 60,
-    difficulty: 'hard'
-  },
-  {
-    id: 'code-refactor',
-    name: 'Code Refactoring',
-    description: 'Refactor existing code to improve quality or performance',
-    target: 'Refactor {{component_name}} to improve {{improvement_area}}',
-    tags: ['refactor', 'improvement'],
-    estimatedDuration: 45,
-    difficulty: 'medium'
-  },
-  {
-    id: 'documentation',
-    name: 'Documentation',
-    description: 'Create or update documentation',
-    target: 'Create comprehensive documentation for {{component_name}}',
-    tags: ['documentation', 'docs'],
-    estimatedDuration: 20,
-    difficulty: 'easy'
-  },
-  {
-    id: 'testing',
-    name: 'Add Tests',
-    description: 'Add unit tests or integration tests',
-    target: 'Add comprehensive tests for {{component_name}} with {{coverage_percentage}}% coverage',
-    tags: ['testing', 'quality'],
-    estimatedDuration: 40,
-    difficulty: 'medium'
-  },
-  {
-    id: 'security-fix',
-    name: 'Security Fix',
-    description: 'Address security vulnerabilities',
-    target: 'Fix security vulnerability: {{vulnerability_description}}',
-    tags: ['security', 'vulnerability'],
-    estimatedDuration: 35,
-    difficulty: 'hard'
-  }
-];
+export default function CreateAgentRun() {
+  const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState(false);
+  const [organizations, setOrganizations] = useState<OrganizationResponse[]>([]);
+  const [isLoadingOrgs, setIsLoadingOrgs] = useState(true);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-export const CreateAgentRun: React.FC<CreateAgentRunProps> = ({
-  organizationId,
-  onAgentRunCreated,
-  onCancel,
-  initialValues = {},
-  showRepositorySelector = true
-}) => {
-  const [state, setState] = useState<CreateAgentRunState>({
-    loading: true,
-    submitting: false,
-    repositories: [],
-    templates: AGENT_RUN_TEMPLATES
-  });
+  const [defaultOrgId, setDefaultOrgId] = useState<string | null>(null);
+  const { refresh } = useCachedAgentRuns();
 
-  const [form, setForm] = useState<CreateAgentRunForm>({
-    ...DEFAULT_FORM_VALUES,
-    organizationId,
-    ...initialValues
-  });
 
-  const [tagInput, setTagInput] = useState('');
-  const [selectedTemplate, setSelectedTemplate] = useState<AgentRunTemplate | null>(null);
+  const apiClient = getAPIClient();
+  const cache = getAgentRunCache();
+  const backgroundMonitoring = getBackgroundMonitoringService();
+  const { userInfo } = useCurrentUser();
 
-  // Load repositories
-  const loadRepositories = async () => {
-    if (!showRepositorySelector) {
-      setState(prev => ({ ...prev, loading: false }));
-      return;
-    }
+  // Create welcome message using full name or GitHub username
+  const getWelcomeMessage = () => {
+    if (!userInfo) return "Welcome! 👋";
+    
+    const name = userInfo.full_name || 
+                 (userInfo.github_username ? userInfo.github_username : null) ||
+                 "there";
+    
+    return `Welcome, ${name}! 👋`;
+  };
 
-    try {
-      const creds = credentials.getCredentials();
-      if (!creds.GITHUB_TOKEN) {
-        throw new Error('GitHub token is required');
+  // Validate credentials and load organizations on mount
+  useEffect(() => {
+    async function initialize() {
+      if (!hasCredentials()) {
+        setValidationError("API token not configured. Please set it in extension preferences.");
+        setIsLoadingOrgs(false);
+        return;
       }
 
-      // Mock API call - replace with actual GitHub API
-      const mockRepositories: Repository[] = [
-        {
-          id: 'repo-1',
-          name: 'web-app',
-          fullName: 'acme-corp/web-app',
-          description: 'Main web application',
-          private: false,
-          defaultBranch: 'main',
-          language: 'TypeScript',
-          updatedAt: Date.now() - 3600000
-        },
-        {
-          id: 'repo-2',
-          name: 'api-server',
-          fullName: 'acme-corp/api-server',
-          description: 'Backend API server',
-          private: true,
-          defaultBranch: 'main',
-          language: 'Python',
-          updatedAt: Date.now() - 7200000
-        },
-        {
-          id: 'repo-3',
-          name: 'mobile-app',
-          fullName: 'acme-corp/mobile-app',
-          description: 'React Native mobile application',
-          private: false,
-          defaultBranch: 'develop',
-          language: 'JavaScript',
-          updatedAt: Date.now() - 1800000
+      try {
+        // Load cached organizations and default from local storage
+        const cachedDefaultOrgId = localStorage.getItem("defaultOrganizationId");
+        const cachedDefaultOrg = localStorage.getItem("defaultOrganization");
+        
+        if (cachedDefaultOrgId) {
+          setDefaultOrgId(cachedDefaultOrgId);
         }
-      ];
+        
+        // Use cached default organization if available
+        if (cachedDefaultOrg) {
+          try {
+            const defaultOrg: OrganizationResponse = JSON.parse(cachedDefaultOrg);
+            if (defaultOrg.id && defaultOrg.name && defaultOrg.settings) {
+              setOrganizations([defaultOrg]);
+            }
+          } catch (parseError) {
+            console.log("Could not parse cached default organization:", parseError);
+          }
+        }
 
-      setState(prev => ({
-        ...prev,
-        repositories: mockRepositories,
-        loading: false
-      }));
+        // Validate credentials and get organizations from API
+        const validation = await validateCredentials();
+        if (!validation.isValid) {
+          setValidationError(validation.error || "Invalid credentials");
+          setIsLoadingOrgs(false);
+          return;
+        }
 
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load repositories';
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: errorMessage
-      }));
+        // Load organizations from validation result (which fetches from API)
+        if (validation.organizations && validation.organizations.length > 0) {
+          // Convert basic organizations to full OrganizationResponse format
+          const fullOrganizations: OrganizationResponse[] = validation.organizations.map(org => ({
+            id: org.id,
+            name: org.name,
+            settings: {
+              enable_pr_creation: true,
+              enable_rules_detection: true
+            }
+          }));
+          
+          setOrganizations(fullOrganizations);
+          
+          // If no default org is set but we have organizations, set the first one as default
+          if (!cachedDefaultOrgId && fullOrganizations.length > 0) {
+            const firstOrg = fullOrganizations[0];
+            setDefaultOrgId(firstOrg.id.toString());
+            localStorage.setItem("defaultOrganizationId", firstOrg.id.toString());
+            localStorage.setItem("defaultOrganization", JSON.stringify(firstOrg));
+          }
+        }
+          
+        // TODO: Re-enable user profile fetching later
+        // Try to get user's first name for personalization
+        // try {
+        //   const credentials = getCredentials();
+        //   const firstOrgId = validation.organizations[0]?.id;
+        //   const userId = credentials.userId ? parseInt(credentials.userId, 10) : undefined;
+        //   
+        //   if (firstOrgId) {
+        //     const firstName = await getCurrentUserFirstName(firstOrgId, userId);
+        //     setUserFirstName(firstName);
+        //   }
+        // } catch (error) {
+        //   console.log("Could not fetch user name:", error);
+        //   // Keep default "User" name
+        // }
+      } catch (error) {
+        setValidationError(error instanceof Error ? error.message : "Failed to validate credentials");
+      } finally {
+        setIsLoadingOrgs(false);
+      }
     }
-  };
 
-  // Handle form field changes
-  const handleFormChange = (field: keyof CreateAgentRunForm, value: any) => {
-    setForm(prev => ({ ...prev, [field]: value }));
-  };
+    initialize();
+  }, []);
 
-  // Handle template selection
-  const handleTemplateSelect = (template: AgentRunTemplate) => {
-    setSelectedTemplate(template);
-    setForm(prev => ({
-      ...prev,
-      target: template.target,
-      description: template.description,
-      tags: [...template.tags]
-    }));
-  };
-
-  // Add tag
-  const addTag = () => {
-    const tag = tagInput.trim().toLowerCase();
-    if (tag && !form.tags.includes(tag)) {
-      setForm(prev => ({
-        ...prev,
-        tags: [...prev.tags, tag]
-      }));
-      setTagInput('');
-    }
-  };
-
-  // Remove tag
-  const removeTag = (tagToRemove: string) => {
-    setForm(prev => ({
-      ...prev,
-      tags: prev.tags.filter(tag => tag !== tagToRemove)
-    }));
-  };
-
-  // Handle tag input key press
-  const handleTagInputKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addTag();
-    }
-  };
-
-  // Validate form
-  const validateForm = (): string | null => {
-    if (!form.target.trim()) {
-      return 'Target is required';
-    }
-    if (form.target.length < 10) {
-      return 'Target must be at least 10 characters long';
-    }
-    if (showRepositorySelector && !form.repositoryId) {
-      return 'Repository selection is required';
-    }
-    return null;
-  };
-
-  // Submit form
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const validationError = validateForm();
-    if (validationError) {
-      toast.error('Validation Error', validationError);
+  async function handleSubmit(values: FormValues) {
+    if (!values.prompt.trim()) {
+      toast.error("I need a description of what you want me to create");
       return;
     }
 
-    setState(prev => ({ ...prev, submitting: true }));
+    if (!values.organizationId) {
+      toast.error("I need to know which organization to create this in");
+      return;
+    }
+
+    setIsLoading(true);
 
     try {
-      // Mock API call - replace with actual Codegen API
-      const newAgentRun: AgentRun = {
-        id: `run-${Date.now()}`,
-        organizationId: form.organizationId,
-        repositoryId: form.repositoryId,
-        status: 'pending',
-        target: form.target,
-        description: form.description || undefined,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        metadata: {
-          priority: form.priority,
-          autoConfirmPlan: form.autoConfirmPlan,
-          autoMergePR: form.autoMergePR,
-          templateId: selectedTemplate?.id
-        },
-        tags: form.tags.length > 0 ? form.tags : undefined
-      };
+      const organizationId = parseInt(values.organizationId, 10);
+      let prompt = values.prompt.trim();
 
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Attach clipboard content if requested
+      if (values.attachClipboard) {
+        try {
+          const clipboardText = await navigator.clipboard.readText();
+          if (clipboardText && clipboardText.trim()) {
+            prompt += `\n\n--- Additional Context ---\n${clipboardText}`;
+          }
+        } catch (error) {
+          console.warn("Failed to read clipboard:", error);
+        }
+      }
 
-      setState(prev => ({ ...prev, submitting: false }));
-      
-      toast.success('Agent Run Created', 'Your agent run has been created and will start shortly');
-      notifications.add('agent_run_started', 'Agent Run Started', form.target, {
-        data: { agentRunId: newAgentRun.id }
+      // Create the agent run
+      const agentRun = await apiClient.createAgentRun(organizationId, {
+        prompt,
       });
 
-      onAgentRunCreated?.(newAgentRun);
+      // Cache the new agent run
+      await cache.updateAgentRun(organizationId, agentRun);
 
+      // Add to tracking for notifications
+      await cache.addToTracking(organizationId, agentRun);
+
+      // Start background monitoring if not already running
+      if (!backgroundMonitoring.isMonitoring()) {
+        backgroundMonitoring.start();
+      }
+
+      // Refresh the list view to show the new run
+      await refresh();
+
+      toast.success(`Starting agent run #${agentRun.id} - I'll let you know when it's done`, {
+        duration: 5000,
+      });
+
+      navigate(-1);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to create agent run';
-      setState(prev => ({ ...prev, submitting: false }));
-      toast.error('Creation Failed', errorMessage);
+      console.error("Failed to create agent run:", error);
+      
+      toast.error(error instanceof Error ? error.message : "Something went wrong, let's try that again");
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }
 
-  // Load repositories on mount
+  const [formData, setFormData] = useState<FormValues>({
+    prompt: '',
+    organizationId: '',
+    attachClipboard: false
+  });
+
+  // Update form data when default organization changes
   useEffect(() => {
-    loadRepositories();
-  }, [organizationId]);
+    if (defaultOrgId && !formData.organizationId) {
+      setFormData(prev => ({
+        ...prev,
+        organizationId: defaultOrgId
+      }));
+    }
+  }, [defaultOrgId, formData.organizationId]);
 
-  if (state.loading) {
+  if (validationError) {
     return (
-      <div className="flex items-center justify-center p-8">
-        <LoadingSpinner size="lg" />
-        <span className="ml-3 text-gray-600">Loading repositories...</span>
+      <div className="container mx-auto p-6 max-w-2xl">
+        <div className="bg-black rounded-lg border border-gray-700 p-6">
+          <h1 className="text-2xl font-bold text-white mb-6">Let's get you set up</h1>
+          
+          <div className="text-center py-8">
+            <Settings className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+            <p className="text-gray-600 mb-4">
+              I need your API token to get started. Once you add it, we can build some amazing things together!
+            </p>
+            <p className="text-red-600 mb-6">{validationError}</p>
+            <button
+              onClick={() => window.open('/settings', '_blank')}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              Configure API Token
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
 
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSubmit(formData);
+  };
+
+  const handleClipboardAction = async () => {
+    try {
+      const clipboardText = await navigator.clipboard.readText();
+      if (clipboardText && clipboardText.trim()) {
+        setFormData(prev => ({ ...prev, prompt: prev.prompt + '\n\n' + clipboardText }));
+        toast.success("Clipboard content added to prompt");
+      }
+    } catch (error) {
+      toast.error("Could not read clipboard content");
+    }
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Create Agent Run</h2>
-          <p className="text-gray-600 mt-1">
-            Configure and start a new AI agent to work on your project
-          </p>
-        </div>
-        {onCancel && (
-          <Button onClick={onCancel} variant="outline">
-            Cancel
-          </Button>
+    <div className="container mx-auto p-6 max-w-2xl">
+      <div className="bg-black rounded-lg border border-gray-700 p-6">
+          <h1 className="text-2xl font-bold text-white mb-6">What are we building today?</h1>
+        
+        {(isLoading || isLoadingOrgs) && (
+          <div className="text-center py-4">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-2 text-gray-500">Loading...</p>
+          </div>
         )}
-      </div>
+        
+        <div className="mb-6">
+          <p className="text-gray-600">{getWelcomeMessage()}</p>
+        </div>
+        
+        <form onSubmit={handleFormSubmit} className="space-y-6">
+          <div>
+            <label htmlFor="prompt" className="sr-only">Prompt</label>
+            <textarea
+              id="prompt"
+              rows={6}
+              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              placeholder="What are we building today?"
+              value={formData.prompt}
+              onChange={(e) => setFormData(prev => ({ ...prev, prompt: (e.target as HTMLTextAreaElement).value }))}
+              required
+            />
+          </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Templates */}
-        <Card>
-          <div className="p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Start Templates</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {state.templates.map(template => (
-                <div
-                  key={template.id}
-                  className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                    selectedTemplate?.id === template.id
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                  }`}
-                  onClick={() => handleTemplateSelect(template)}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium text-gray-900">{template.name}</h4>
-                    <Badge
-                      className={
-                        template.difficulty === 'easy' ? 'bg-green-100 text-green-800' :
-                        template.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-red-100 text-red-800'
-                      }
-                    >
-                      {template.difficulty}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-gray-600 mb-3">{template.description}</p>
-                  <div className="flex items-center justify-between text-xs text-gray-500">
-                    <div className="flex items-center space-x-1">
-                      <ClockIcon className="w-3 h-3" />
-                      <span>{template.estimatedDuration}min</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {template.tags.slice(0, 2).map(tag => (
-                        <Badge key={tag} variant="secondary" className="text-xs">
-                          {tag}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+          <div className="flex items-center">
+            <input
+              id="attachClipboard"
+              type="checkbox"
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              checked={formData.attachClipboard}
+              onChange={(e) => setFormData(prev => ({ ...prev, attachClipboard: (e.target as HTMLInputElement).checked }))}
+            />
+            <label htmlFor="attachClipboard" className="ml-2 block text-sm text-white">
+              Include what's on my clipboard for context
+            </label>
+          </div>
+
+          <div>
+            <label htmlFor="organizationId" className="block text-sm font-medium text-gray-700 mb-2">
+              Organization
+            </label>
+            <select
+              id="organizationId"
+              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              value={formData.organizationId}
+              onChange={(e) => setFormData(prev => ({ ...prev, organizationId: (e.target as HTMLSelectElement).value }))}
+              required
+            >
+              <option value="">Choose org</option>
+              {organizations.map((org) => (
+                <option key={org.id} value={org.id.toString()}>
+                  {org.name}
+                </option>
               ))}
-            </div>
+            </select>
           </div>
-        </Card>
 
-        {/* Repository Selection */}
-        {showRepositorySelector && (
-          <Card>
-            <div className="p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Repository</h3>
-              <Select
-                value={form.repositoryId || ''}
-                onChange={(value) => handleFormChange('repositoryId', value)}
-                placeholder="Select a repository"
-                required
-              >
-                {state.repositories.map(repo => (
-                  <option key={repo.id} value={repo.id}>
-                    {repo.fullName} {repo.private && '(Private)'}
-                  </option>
-                ))}
-              </Select>
-              {form.repositoryId && (
-                <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-                  {(() => {
-                    const repo = state.repositories.find(r => r.id === form.repositoryId);
-                    return repo ? (
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium text-gray-900">{repo.name}</p>
-                          <p className="text-sm text-gray-600">{repo.description}</p>
-                        </div>
-                        <div className="text-right text-sm text-gray-500">
-                          <p>{repo.language}</p>
-                          <p>Default: {repo.defaultBranch}</p>
-                        </div>
-                      </div>
-                    ) : null;
-                  })()}
-                </div>
-              )}
-            </div>
-          </Card>
-        )}
-
-        {/* Target Configuration */}
-        <Card>
-          <div className="p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Target & Description</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Target <span className="text-red-500">*</span>
-                </label>
-                <Textarea
-                  value={form.target}
-                  onChange={(e) => handleFormChange('target', e.target.value)}
-                  placeholder="Describe what you want the agent to accomplish..."
-                  rows={3}
-                  required
-                  className="resize-none"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Be specific about what you want the agent to do. Include relevant details, requirements, or constraints.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Additional Description
-                </label>
-                <Textarea
-                  value={form.description}
-                  onChange={(e) => handleFormChange('description', e.target.value)}
-                  placeholder="Optional: Add more context, background information, or specific requirements..."
-                  rows={2}
-                  className="resize-none"
-                />
-              </div>
-            </div>
+          <div className="flex items-center space-x-3">
+            <button
+              type="submit"
+              disabled={isLoading || isLoadingOrgs}
+              className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Rocket className="h-4 w-4 mr-2" />
+              Let's Build This
+            </button>
+            
+            <button
+              type="button"
+              onClick={handleClipboardAction}
+              className="inline-flex items-center px-4 py-2 border border-gray-600 text-sm font-medium rounded-md text-gray-300 bg-gray-700 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-gray-800"
+              title="Add from Clipboard (Cmd+V)"
+            >
+              <ClipboardIcon className="h-4 w-4" />
+            </button>
           </div>
-        </Card>
-
-        {/* Tags and Priority */}
-        <Card>
-          <div className="p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Tags & Priority</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Tags
-                </label>
-                <div className="flex space-x-2 mb-3">
-                  <Input
-                    type="text"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyPress={handleTagInputKeyPress}
-                    placeholder="Add a tag..."
-                    className="flex-1"
-                  />
-                  <Button type="button" onClick={addTag} variant="outline" size="sm">
-                    Add
-                  </Button>
-                </div>
-                {form.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {form.tags.map(tag => (
-                      <Badge
-                        key={tag}
-                        variant="secondary"
-                        className="cursor-pointer hover:bg-red-100 hover:text-red-800"
-                        onClick={() => removeTag(tag)}
-                      >
-                        {tag} ×
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Priority
-                </label>
-                <Select
-                  value={form.priority}
-                  onChange={(value) => handleFormChange('priority', value as CreateAgentRunForm['priority'])}
-                >
-                  <option value="low">Low</option>
-                  <option value="normal">Normal</option>
-                  <option value="high">High</option>
-                  <option value="urgent">Urgent</option>
-                </Select>
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Automation Settings */}
-        <Card>
-          <div className="p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Automation Settings</h3>
-            <div className="space-y-4">
-              <label className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  checked={form.autoConfirmPlan}
-                  onChange={(e) => handleFormChange('autoConfirmPlan', e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <div>
-                  <span className="text-sm font-medium text-gray-900">Auto-confirm proposed plan</span>
-                  <p className="text-xs text-gray-500">
-                    Automatically approve the agent's execution plan without manual review
-                  </p>
-                </div>
-              </label>
-
-              <label className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  checked={form.autoMergePR}
-                  onChange={(e) => handleFormChange('autoMergePR', e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <div>
-                  <span className="text-sm font-medium text-gray-900">Auto-merge validated PR</span>
-                  <p className="text-xs text-gray-500">
-                    Automatically merge pull requests that pass all validation checks
-                  </p>
-                </div>
-              </label>
-            </div>
-          </div>
-        </Card>
-
-        {/* Submit Button */}
-        <div className="flex items-center justify-end space-x-4">
-          {onCancel && (
-            <Button type="button" onClick={onCancel} variant="outline">
-              Cancel
-            </Button>
-          )}
-          <Button
-            type="submit"
-            disabled={state.submitting}
-            className="min-w-[120px]"
-          >
-            {state.submitting ? (
-              <>
-                <LoadingSpinner size="sm" className="mr-2" />
-                Creating...
-              </>
-            ) : (
-              <>
-                <PlayIcon className="w-4 h-4 mr-2" />
-                Create & Start
-              </>
-            )}
-          </Button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
-};
-
-export default CreateAgentRun;
-
+}
